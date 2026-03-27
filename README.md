@@ -162,11 +162,10 @@ python -m pytest
 - Restauracion automatica de cola pendiente desde disco o `state_uri_prefix`.
 - Spool durable de progreso y resultados hasta recibir `ack` del coordinador, con replay tras reinicio.
 - Cancelacion cooperativa por defecto para las transformaciones integradas del worker. El aislamiento en proceso dedicado queda reservado para extensiones no cooperativas o cuando una tarea lo pida explicitamente con `metadata.execution_isolation=process`.
-- `input_uri` y `output_uri` listos para integrarse con storage compartido sin modificar el contrato gRPC.
-- OCR e inferencia integrados via adaptadores por comando (`WORKER_OCR_COMMAND`, `WORKER_INFERENCE_COMMAND` o metadata por tarea).
 
-## Limitaciones residuales
+## Limitaciones actuales
 
-- `http(s)` se soporta como origen de lectura y destino `PUT` para URIs firmadas; para listados durables de estado compartido se recomienda `file://` montado o `s3://`/MinIO.
-- La propiedad de cola sigue siendo por nodo. Compartir `state_uri_prefix` mejora durabilidad y observabilidad, pero no convierte al worker en una cola distribuida multi-owner.
-- OCR e inferencia dependen de un backend ejecutable configurado por el operador. El worker ya integra el adaptador y el contrato, pero no empaqueta modelos pesados ni binarios externos por defecto.
+- `input_uri` queda reservado para una integracion futura con storage compartido.
+- OCR e inferencia estan desacoplados y marcados como extension.
+- Para el set actual de transformaciones integradas, la cancelacion normal ya no depende de matar procesos. El `terminate/kill` queda solo como mecanismo de contencion para tareas aisladas explicitamente en proceso o extensiones futuras no cooperativas.
+- La persistencia local es de un solo nodo; no reemplaza un log distribuido ni una cola compartida entre workers.
