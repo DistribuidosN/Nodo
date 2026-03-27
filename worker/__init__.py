@@ -1,0 +1,1 @@
+"""Distributed image worker package."""

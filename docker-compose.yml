@@ -1,0 +1,108 @@
+services:
+  coordinator:
+    build:
+      context: .
+    command: ["python", "examples/mock_coordinator.py"]
+    ports:
+      - "50052:50052"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',50052),2); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  worker1:
+    build:
+      context: .
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    environment:
+      WORKER_NODE_ID: worker-1
+      WORKER_BIND_HOST: 0.0.0.0
+      WORKER_BIND_PORT: 50051
+      WORKER_COORDINATOR_TARGET: coordinator:50052
+      WORKER_METRICS_HOST: 0.0.0.0
+      WORKER_METRICS_PORT: 9101
+      WORKER_HEALTH_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: 8081
+      WORKER_OUTPUT_DIR: /app/data/out
+      WORKER_STATE_DIR: /app/data/state
+    ports:
+      - "50051:50051"
+      - "8081:8081"
+      - "9101:9101"
+    volumes:
+      - worker1-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  worker2:
+    build:
+      context: .
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    environment:
+      WORKER_NODE_ID: worker-2
+      WORKER_BIND_HOST: 0.0.0.0
+      WORKER_BIND_PORT: 50051
+      WORKER_COORDINATOR_TARGET: coordinator:50052
+      WORKER_METRICS_HOST: 0.0.0.0
+      WORKER_METRICS_PORT: 9102
+      WORKER_HEALTH_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: 8082
+      WORKER_OUTPUT_DIR: /app/data/out
+      WORKER_STATE_DIR: /app/data/state
+    ports:
+      - "50061:50051"
+      - "8082:8082"
+      - "9102:9102"
+    volumes:
+      - worker2-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  worker3:
+    build:
+      context: .
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    environment:
+      WORKER_NODE_ID: worker-3
+      WORKER_BIND_HOST: 0.0.0.0
+      WORKER_BIND_PORT: 50051
+      WORKER_COORDINATOR_TARGET: coordinator:50052
+      WORKER_METRICS_HOST: 0.0.0.0
+      WORKER_METRICS_PORT: 9103
+      WORKER_HEALTH_HOST: 0.0.0.0
+      WORKER_HEALTH_PORT: 8083
+      WORKER_OUTPUT_DIR: /app/data/out
+      WORKER_STATE_DIR: /app/data/state
+    ports:
+      - "50071:50051"
+      - "8083:8083"
+      - "9103:9103"
+    volumes:
+      - worker3-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  worker1-data:
+  worker2-data:
+  worker3-data:

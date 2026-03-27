@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "distributed-image-worker"
+version = "0.1.0"
+description = "Async gRPC worker node for distributed image processing."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "grpcio>=1.71.0",
+  "grpcio-tools>=1.71.0",
+  "Pillow>=11.0.0",
+  "prometheus-client>=0.21.0",
+  "psutil>=7.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.25.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["worker*", "proto*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
