@@ -10,6 +10,7 @@ from PIL import Image
 
 from worker.config import WorkerConfig
 from worker.core.node import WorkerNode
+from worker.core.storage import StorageClient
 from worker.core.state_store import EventSpoolStore, PendingTaskStore
 from worker.execution.execution_manager import ExecutionManager
 from worker.execution.image_processor import TaskCancelledError, process_image
@@ -154,6 +155,29 @@ def test_event_spool_store_roundtrip(tmp_path):
     remaining = spool.load_pending()
     assert len(remaining) == 1
     assert remaining[0].spool_id == result_id
+
+
+def test_event_spool_store_supports_file_uri_backend(tmp_path):
+    storage = StorageClient()
+    root_uri = (tmp_path / "shared-state").resolve().as_uri()
+    spool = EventSpoolStore(storage, root_uri)
+    progress = ProgressEventRecord(
+        task_id="task-file",
+        image_id="image-file",
+        node_id="node-file",
+        state=TaskState.RUNNING,
+        progress_pct=25,
+        attempt=1,
+        queue_wait_ms=1,
+        run_time_ms=2,
+        message="queued",
+    )
+
+    spool_id = spool.append("progress", progress)
+    loaded = spool.load_pending()
+
+    assert len(loaded) == 1
+    assert loaded[0].spool_id == spool_id
 
 
 def test_process_image_honors_cancel_token(tmp_path):

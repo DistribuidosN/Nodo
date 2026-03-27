@@ -6,12 +6,12 @@ Worker gRPC en Python para procesamiento distribuido de imagenes. Este repositor
 
 - `asyncio + grpc.aio` para control, scheduling y telemetria.
 - `Pillow` para la primera version porque cubre `grayscale`, `resize`, `crop`, `rotate`, `flip`, `blur`, `sharpen`, `brightness/contrast`, `watermark/text` y conversion de formato con menor complejidad operativa que OpenCV.
-- `ThreadPoolExecutor` para trabajos ligeros y `ProcessPoolExecutor` para transformaciones mas pesadas.
+- `ThreadPoolExecutor` para el set integrado de transformaciones cooperativas y procesos dedicados solo para aislamiento explicito o extensiones no cooperativas.
 - Cola priorizada con `heapq`, score hibrido por prioridad, deadline, aging, costo estimado y tamano.
 - Canal persistente gRPC hacia un coordinador mock para `ReportProgress`, `ReportResult` y `Heartbeat`.
-- Persistencia ligera en `data/state/completed_tasks.jsonl` para deduplicacion tras reinicio.
-- Persistencia de cola pendiente en `data/state/pending_tasks/` para restaurar tareas en espera o retry al arrancar.
-- Spool durable de eventos al coordinador en `data/state/event_spool/`, con replay tras reinicio.
+- `input_uri` y `output_uri/output_uri_prefix` soportados sobre filesystem local, `file://`, `http(s)` de solo lectura y `s3://`/MinIO.
+- Persistencia ligera de resultados, cola pendiente y spool durable sobre filesystem local o un backend compartido configurable por URI.
+- OCR e inferencia integrados como adaptadores ejecutables configurables por comando, sin cambiar el contrato gRPC del worker.
 - Healthchecks HTTP en `/livez` y `/readyz` separados del plano gRPC.
 
 ## Estructura
@@ -68,6 +68,14 @@ Enviar a un worker especifico:
 python examples/submit_task.py --target 127.0.0.1:50061
 ```
 
+Ejemplo con `input_uri` y `output_uri_prefix`:
+
+```bash
+python examples/submit_task.py --target 127.0.0.1:50051
+```
+
+La tarea puede enviar `input.input_uri` en el proto y opcionalmente `metadata["output_uri"]` o `metadata["output_uri_prefix"]`.
+
 Prueba simple de carga:
 
 ```bash
@@ -122,7 +130,9 @@ python -m pytest
 - `WORKER_BIND_PORT`
 - `WORKER_COORDINATOR_TARGET`
 - `WORKER_OUTPUT_DIR`
+- `WORKER_OUTPUT_URI_PREFIX`
 - `WORKER_STATE_DIR`
+- `WORKER_STATE_URI_PREFIX`
 - `WORKER_METRICS_HOST`
 - `WORKER_METRICS_PORT`
 - `WORKER_HEALTH_HOST`
@@ -134,20 +144,29 @@ python -m pytest
 - `WORKER_COORDINATOR_RECONNECT_BASE_SECONDS`
 - `WORKER_COORDINATOR_RECONNECT_MAX_SECONDS`
 - `WORKER_COORDINATOR_FAILURE_THRESHOLD`
+- `WORKER_STORAGE_ENDPOINT_URL`
+- `WORKER_STORAGE_ACCESS_KEY_ID`
+- `WORKER_STORAGE_SECRET_ACCESS_KEY`
+- `WORKER_STORAGE_REGION`
+- `WORKER_STORAGE_FORCE_PATH_STYLE`
+- `WORKER_OCR_COMMAND`
+- `WORKER_INFERENCE_COMMAND`
+- `WORKER_ADAPTER_TIMEOUT_SECONDS`
 
 ## Hardening agregado
 
 - Reconexion gRPC con backoff exponencial y `keepalive`.
 - Health server listo para Docker y orquestadores.
 - Manejo de `SIGINT` y `SIGTERM` para cierre ordenado.
-- Persistencia ligera de resultados terminales para deduplicacion tras reinicios.
-- Restauracion automatica de cola pendiente desde disco.
-- Spool durable de progreso y resultados hasta recibir `ack` del coordinador.
+- Persistencia ligera de resultados terminales para deduplicacion tras reinicios sobre storage local o compartido.
+- Restauracion automatica de cola pendiente desde disco o `state_uri_prefix`.
+- Spool durable de progreso y resultados hasta recibir `ack` del coordinador, con replay tras reinicio.
 - Cancelacion cooperativa por defecto para las transformaciones integradas del worker. El aislamiento en proceso dedicado queda reservado para extensiones no cooperativas o cuando una tarea lo pida explicitamente con `metadata.execution_isolation=process`.
+- `input_uri` y `output_uri` listos para integrarse con storage compartido sin modificar el contrato gRPC.
+- OCR e inferencia integrados via adaptadores por comando (`WORKER_OCR_COMMAND`, `WORKER_INFERENCE_COMMAND` o metadata por tarea).
 
-## Limitaciones actuales
+## Limitaciones residuales
 
-- `input_uri` queda reservado para una integracion futura con storage compartido.
-- OCR e inferencia estan desacoplados y marcados como extension.
-- Para el set actual de transformaciones integradas, la cancelacion normal ya no depende de matar procesos. El `terminate/kill` queda solo como mecanismo de contencion para tareas aisladas explicitamente en proceso o extensiones futuras no cooperativas.
-- La persistencia local es de un solo nodo; no reemplaza un log distribuido ni una cola compartida entre workers.
+- `http(s)` se soporta como origen de lectura y destino `PUT` para URIs firmadas; para listados durables de estado compartido se recomienda `file://` montado o `s3://`/MinIO.
+- La propiedad de cola sigue siendo por nodo. Compartir `state_uri_prefix` mejora durabilidad y observabilidad, pero no convierte al worker en una cola distribuida multi-owner.
+- OCR e inferencia dependen de un backend ejecutable configurado por el operador. El worker ya integra el adaptador y el contrato, pero no empaqueta modelos pesados ni binarios externos por defecto.

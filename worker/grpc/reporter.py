@@ -11,6 +11,7 @@ import grpc
 from proto import worker_node_pb2, worker_node_pb2_grpc
 from worker.config import WorkerConfig
 from worker.core.state_store import EventSpoolStore
+from worker.core.storage import StorageClient
 from worker.grpc.mappers import node_status_to_proto, progress_to_proto, result_to_proto
 from worker.models.types import ExecutionResultRecord, NodeState, ProgressEventRecord
 from worker.telemetry.metrics import WorkerMetrics
@@ -20,7 +21,14 @@ StatusProvider = Callable[[], Awaitable[NodeState]]
 
 
 class CoordinatorReporter:
-    def __init__(self, config: WorkerConfig, metrics: WorkerMetrics, status_provider: StatusProvider) -> None:
+    def __init__(
+        self,
+        config: WorkerConfig,
+        metrics: WorkerMetrics,
+        status_provider: StatusProvider,
+        storage: StorageClient,
+        state_root_uri: str,
+    ) -> None:
         self._config = config
         self._metrics = metrics
         self._status_provider = status_provider
@@ -35,7 +43,7 @@ class CoordinatorReporter:
         self._failure_count = 0
         self._connected = False
         self._channel_lock = asyncio.Lock()
-        self._spool = EventSpoolStore(config.state_dir)
+        self._spool = EventSpoolStore(storage, state_root_uri)
 
     async def start(self) -> None:
         await self._connect()

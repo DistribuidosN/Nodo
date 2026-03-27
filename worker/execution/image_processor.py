@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import math
+import os
+import subprocess
+import tempfile
 import time
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
+from worker.core.storage import StorageClient
 from worker.models.types import OperationType, Task
 
 
@@ -19,23 +24,47 @@ FORMAT_MAP = {
 }
 
 DEFAULT_TILE_SIZE = 256
+INTERNAL_RESULT_METADATA_KEYS = {
+    "node_id",
+    "execution_isolation",
+    "child_pid",
+    "ocr_command",
+    "inference_command",
+    "adapter_timeout_seconds",
+    "output_uri_prefix",
+}
 
 
 class TaskCancelledError(Exception):
     """Raised when a running task observes a cancellation token."""
 
 
-def process_image(task: Task, output_dir: str) -> tuple[str, str, int, int, int, dict[str, str]]:
+def process_image(
+    task: Task,
+    output_dir: str,
+    storage: StorageClient | None = None,
+    output_uri_prefix: str | None = None,
+) -> tuple[str, str, int, int, int, dict[str, str]]:
+    storage_client = storage or StorageClient()
     _check_cancelled(task)
-    image = _load_image(task)
+    image = _load_image(task, storage_client)
     for transform in task.transforms:
         image = apply_transform_checked(task, image, transform.operation, transform.params)
 
     requested_format = (task.output_format or task.input_image.image_format or "png").lower()
     output_bytes, save_format = serialize_image(image, requested_format)
     width, height = image.size
-    output_path, size_bytes = persist_output_bytes(task.task_id, output_bytes, requested_format, output_dir)
-    return str(output_path), requested_format, width, height, size_bytes, {"processor": "pillow"}
+    output_uri = resolve_output_uri(task, requested_format, output_uri_prefix)
+    output_path, size_bytes = persist_output_bytes(
+        task.task_id,
+        output_bytes,
+        requested_format,
+        output_dir,
+        storage_client,
+        output_uri=output_uri,
+    )
+    metadata = _result_metadata(task, processor="pillow", output_backend=_output_backend(output_path))
+    return str(output_path), requested_format, width, height, size_bytes, metadata
 
 
 def process_transform_stage(
@@ -51,17 +80,22 @@ def process_transform_stage(
     image = apply_transform_checked(task, image, operation, params)
     output_bytes, _save_format = serialize_image(image, stage_output_format)
     width, height = image.size
-    return output_bytes, stage_output_format, width, height, {"processor": "pillow", "stage_operation": operation.value}
+    metadata = _result_metadata(task, processor="pillow", stage_operation=operation.value)
+    return output_bytes, stage_output_format, width, height, metadata
 
 
-def load_input_bytes(task: Task) -> tuple[bytes, str]:
+def load_input_bytes(task: Task, storage: StorageClient | None = None) -> tuple[bytes, str]:
+    storage_client = storage or StorageClient()
     if task.input_image.payload:
         return task.input_image.payload, (task.input_image.image_format or "png").lower()
     if task.input_image.input_path:
         path = Path(task.input_image.input_path)
         return path.read_bytes(), (task.input_image.image_format or path.suffix.lstrip(".") or "png").lower()
     if task.input_image.input_uri:
-        raise ValueError("input_uri is not supported by the local worker implementation")
+        payload = storage_client.read_bytes(task.input_image.input_uri)
+        parsed_suffix = Path(task.input_image.input_uri).suffix.lstrip(".")
+        image_format = (task.input_image.image_format or parsed_suffix or "png").lower()
+        return payload, image_format
     raise ValueError("task does not contain an image source")
 
 
@@ -79,17 +113,43 @@ def serialize_image(image: Image.Image, requested_format: str) -> tuple[bytes, s
     return buffer.getvalue(), save_format
 
 
-def persist_output_bytes(task_id: str, output_bytes: bytes, requested_format: str, output_dir: str) -> tuple[Path, int]:
+def resolve_output_uri(task: Task, requested_format: str, output_uri_prefix: str | None = None) -> str | None:
+    target = task.metadata.get("output_uri")
+    if not target:
+        target = task.metadata.get("output_uri_prefix") or output_uri_prefix
+    if not target:
+        return None
+    if target.endswith("/"):
+        return f"{target}{task.task_id}.{requested_format}"
+    suffix = Path(target).suffix
+    return target if suffix else f"{target.rstrip('/')}/{task.task_id}.{requested_format}"
+
+
+def persist_output_bytes(
+    task_id: str,
+    output_bytes: bytes,
+    requested_format: str,
+    output_dir: str,
+    storage: StorageClient | None = None,
+    *,
+    output_uri: str | None = None,
+) -> tuple[str, int]:
+    storage_client = storage or StorageClient()
+    if output_uri:
+        content_type = f"image/{'jpeg' if requested_format in {'jpg', 'jpeg'} else requested_format}"
+        storage_client.write_bytes(output_uri, output_bytes, content_type=content_type)
+        return output_uri, len(output_bytes)
+
     output_path = Path(output_dir) / f"{task_id}.{requested_format}"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
     tmp_path.write_bytes(output_bytes)
     tmp_path.replace(output_path)
-    return output_path, output_path.stat().st_size
+    return str(output_path), output_path.stat().st_size
 
 
-def _load_image(task: Task) -> Image.Image:
-    payload, _input_format = load_input_bytes(task)
+def _load_image(task: Task, storage: StorageClient) -> Image.Image:
+    payload, _input_format = load_input_bytes(task, storage)
     return load_image_bytes(payload)
 
 
@@ -118,10 +178,10 @@ def apply_transform_checked(image_task: Task, image: Image.Image, operation: Ope
         return _brightness_contrast_cooperative(image_task, image, params)
     _maybe_delay(params)
     _check_cancelled(image_task)
-    return _apply_transform(image, operation, params)
+    return _apply_transform(image_task, image, operation, params)
 
 
-def _apply_transform(image: Image.Image, operation: OperationType, params: dict[str, str]) -> Image.Image:
+def _apply_transform(task: Task, image: Image.Image, operation: OperationType, params: dict[str, str]) -> Image.Image:
     if operation == OperationType.GRAYSCALE:
         return ImageOps.grayscale(image)
     if operation == OperationType.RESIZE:
@@ -165,7 +225,7 @@ def _apply_transform(image: Image.Image, operation: OperationType, params: dict[
     if operation == OperationType.FORMAT_CONVERSION:
         return image
     if operation in {OperationType.OCR, OperationType.INFERENCE}:
-        raise NotImplementedError(f"{operation.value} is reserved for an extension module")
+        return _run_adapter_operation(task, image, operation, params)
     raise ValueError(f"unsupported operation: {operation.value}")
 
 
@@ -232,14 +292,6 @@ def _brightness_contrast_cooperative(task: Task, image: Image.Image, params: dic
     return current
 
 
-def _intermediate_dimension(current: int, target: int) -> int:
-    if current == target:
-        return target
-    if current > target:
-        return max(target, current // 2) if current > target * 2 else target
-    return min(target, current * 2) if target > current * 2 else target
-
-
 def _step_guard(task: Task, params: dict[str, str]) -> None:
     _maybe_delay(params)
     _check_cancelled(task)
@@ -300,10 +352,7 @@ def _rotate_tiled(task: Task, image: Image.Image, angle: float, expand: bool, pa
     ]
 
     if expand:
-        rotated = [
-            (cos_a * x - sin_a * y, sin_a * x + cos_a * y)
-            for x, y in corners
-        ]
+        rotated = [(cos_a * x - sin_a * y, sin_a * x + cos_a * y) for x, y in corners]
         xs = [item[0] for item in rotated]
         ys = [item[1] for item in rotated]
         out_width = max(1, int(math.ceil(max(xs) - min(xs))))
@@ -346,3 +395,104 @@ def _rotate_tiled(task: Task, image: Image.Image, angle: float, expand: bool, pa
             )
             output.paste(patch, (left, top))
     return output
+
+
+def _run_adapter_operation(task: Task, image: Image.Image, operation: OperationType, params: dict[str, str]) -> Image.Image:
+    command = params.get("command") or task.metadata.get(f"{operation.value}_command")
+    if not command:
+        raise ValueError(f"{operation.value} command is not configured")
+
+    timeout = float(params.get("timeout_seconds") or task.metadata.get("adapter_timeout_seconds") or "30")
+    with tempfile.TemporaryDirectory(prefix=f"{operation.value}-{task.task_id}-") as temp_dir:
+        temp_path = Path(temp_dir)
+        input_path = temp_path / "input.png"
+        output_image = temp_path / "output.png"
+        output_json = temp_path / "result.json"
+        image.save(input_path, format="PNG")
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "WORKER_INPUT_FILE": str(input_path),
+                "WORKER_OUTPUT_IMAGE": str(output_image),
+                "WORKER_OUTPUT_JSON": str(output_json),
+                "WORKER_OPERATION": operation.value,
+                "WORKER_TASK_ID": task.task_id,
+                "WORKER_IMAGE_ID": task.input_image.image_id,
+                "WORKER_PARAMS_JSON": json.dumps(params, ensure_ascii=True),
+            }
+        )
+        completed = _run_command(command, env, timeout)
+        adapter_payload = _load_adapter_payload(output_json, completed.stdout)
+        if adapter_payload is not None:
+            _merge_adapter_metadata(task, operation, adapter_payload)
+
+        _check_cancelled(task)
+        if output_image.exists():
+            return Image.open(output_image).copy()
+    return image
+
+
+def _run_command(command: str, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
+    command = command.strip()
+    if command.startswith("["):
+        argv = json.loads(command)
+        completed = subprocess.run(argv, check=False, capture_output=True, text=True, env=env, timeout=timeout)
+    else:
+        completed = subprocess.run(command, shell=True, check=False, capture_output=True, text=True, env=env, timeout=timeout)
+
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip() or completed.stdout.strip()
+        raise RuntimeError(stderr or f"adapter command failed with code {completed.returncode}")
+    return completed
+
+
+def _load_adapter_payload(output_json: Path, stdout: str) -> dict[str, object] | str | None:
+    if output_json.exists():
+        return json.loads(output_json.read_text(encoding="utf-8"))
+    stdout = stdout.strip()
+    if not stdout:
+        return None
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        return stdout
+
+
+def _merge_adapter_metadata(task: Task, operation: OperationType, payload: dict[str, object] | str) -> None:
+    prefix = operation.value
+    if isinstance(payload, str):
+        task.metadata[f"{prefix}_text"] = payload
+        return
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        for key, value in metadata.items():
+            task.metadata[f"{prefix}_{key}"] = _stringify(value)
+
+    for key in ("text", "artifact_uri", "artifact_path", "score", "label"):
+        if key in payload:
+            task.metadata[f"{prefix}_{key}"] = _stringify(payload[key])
+
+    if "labels" in payload:
+        task.metadata[f"{prefix}_labels"] = json.dumps(payload["labels"], ensure_ascii=True)
+
+
+def _result_metadata(task: Task, **extras: str) -> dict[str, str]:
+    metadata = {
+        key: value
+        for key, value in task.metadata.items()
+        if key not in INTERNAL_RESULT_METADATA_KEYS and isinstance(value, str)
+    }
+    metadata.update(extras)
+    return metadata
+
+
+def _output_backend(output_path: str) -> str:
+    return "uri" if "://" in output_path else "filesystem"
+
+
+def _stringify(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=True) if isinstance(value, (dict, list)) else str(value)

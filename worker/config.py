@@ -16,6 +16,13 @@ def _get_float(name: str, default: float) -> float:
     return float(value) if value is not None else default
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(slots=True)
 class WorkerConfig:
     node_id: str
@@ -53,6 +60,16 @@ class WorkerConfig:
     process_cancel_grace_seconds: float
     process_kill_timeout_seconds: float
     log_level: str
+    output_uri_prefix: str | None = None
+    state_uri_prefix: str | None = None
+    storage_endpoint_url: str | None = None
+    storage_access_key_id: str | None = None
+    storage_secret_access_key: str | None = None
+    storage_region: str | None = None
+    storage_force_path_style: bool = False
+    ocr_command: str | None = None
+    inference_command: str | None = None
+    adapter_timeout_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -97,6 +114,16 @@ class WorkerConfig:
             process_cancel_grace_seconds=_get_float("WORKER_PROCESS_CANCEL_GRACE_SECONDS", 0.75),
             process_kill_timeout_seconds=_get_float("WORKER_PROCESS_KILL_TIMEOUT_SECONDS", 2.0),
             log_level=os.getenv("WORKER_LOG_LEVEL", "INFO"),
+            output_uri_prefix=os.getenv("WORKER_OUTPUT_URI_PREFIX"),
+            state_uri_prefix=os.getenv("WORKER_STATE_URI_PREFIX"),
+            storage_endpoint_url=os.getenv("WORKER_STORAGE_ENDPOINT_URL"),
+            storage_access_key_id=os.getenv("WORKER_STORAGE_ACCESS_KEY_ID"),
+            storage_secret_access_key=os.getenv("WORKER_STORAGE_SECRET_ACCESS_KEY"),
+            storage_region=os.getenv("WORKER_STORAGE_REGION"),
+            storage_force_path_style=_get_bool("WORKER_STORAGE_FORCE_PATH_STYLE", False),
+            ocr_command=os.getenv("WORKER_OCR_COMMAND"),
+            inference_command=os.getenv("WORKER_INFERENCE_COMMAND"),
+            adapter_timeout_seconds=_get_float("WORKER_ADAPTER_TIMEOUT_SECONDS", 30.0),
         )
 
     @property

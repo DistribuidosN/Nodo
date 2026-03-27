@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sys
 import threading
 import time
 from io import BytesIO
@@ -9,6 +11,7 @@ from PIL import Image
 
 import pytest
 
+from worker.core.storage import StorageClient
 from worker.execution.image_processor import TaskCancelledError, process_image
 from worker.models.types import InputImageRef, OperationType, Task, TransformationSpec
 
@@ -95,3 +98,92 @@ def test_process_image_cancels_mid_resize(tmp_path):
     with pytest.raises(TaskCancelledError):
         process_image(task, str(tmp_path))
     thread.join(timeout=1.0)
+
+
+def test_process_image_supports_input_uri_and_output_uri(tmp_path):
+    payload = make_payload()
+    storage = StorageClient()
+    source_path = tmp_path / "shared" / "source.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(payload)
+    output_root = (tmp_path / "shared" / "out").resolve().as_uri() + "/"
+
+    task = Task(
+        task_id="uri-pipeline",
+        idempotency_key="uri-pipeline",
+        priority=5,
+        created_at=datetime.now(tz=UTC),
+        deadline=None,
+        max_retries=0,
+        transforms=[
+            TransformationSpec(operation=OperationType.RESIZE, params={"width": "30", "height": "20"}),
+        ],
+        input_image=InputImageRef(
+            image_id="img-uri",
+            input_uri=source_path.resolve().as_uri(),
+            image_format="png",
+            size_bytes=len(payload),
+            width=120,
+            height=90,
+        ),
+        output_format="png",
+        metadata={"output_uri_prefix": output_root},
+    )
+
+    output_path, output_format, width, height, _size_bytes, metadata = process_image(
+        task,
+        str(tmp_path / "local-out"),
+        storage,
+        output_root,
+    )
+
+    assert output_path.startswith(output_root)
+    assert output_format == "png"
+    assert width == 30
+    assert height == 20
+    assert metadata["output_backend"] == "uri"
+    assert storage.exists(output_path)
+
+
+def test_process_image_runs_ocr_and_inference_adapters(tmp_path):
+    payload = make_payload()
+    adapter_script = (
+        "import json, os;"
+        "operation=os.environ['WORKER_OPERATION'];"
+        "output=os.environ['WORKER_OUTPUT_JSON'];"
+        "payload={'metadata': {f'{operation}_engine': 'stub'}};"
+        "payload['text']='hello world' if operation=='ocr' else payload.setdefault('labels', ['sample']);"
+        "payload['score']=0.99 if operation=='inference' else payload.get('score');"
+        "open(output, 'w', encoding='utf-8').write(json.dumps(payload))"
+    )
+    command = json.dumps([sys.executable, "-c", adapter_script])
+
+    task = Task(
+        task_id="analysis-pipeline",
+        idempotency_key="analysis-pipeline",
+        priority=5,
+        created_at=datetime.now(tz=UTC),
+        deadline=None,
+        max_retries=0,
+        transforms=[
+            TransformationSpec(operation=OperationType.OCR),
+            TransformationSpec(operation=OperationType.INFERENCE),
+        ],
+        input_image=InputImageRef(
+            image_id="img-analysis",
+            payload=payload,
+            image_format="png",
+            size_bytes=len(payload),
+            width=120,
+            height=90,
+        ),
+        output_format="png",
+        metadata={"ocr_command": command, "inference_command": command},
+    )
+
+    _output_path, _output_format, _width, _height, _size_bytes, metadata = process_image(task, str(tmp_path))
+
+    assert metadata["ocr_text"] == "hello world"
+    assert metadata["ocr_ocr_engine"] == "stub"
+    assert metadata["inference_labels"] == "[\"sample\"]"
+    assert metadata["inference_score"] == "0.99"

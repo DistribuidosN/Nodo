@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from worker.config import WorkerConfig
 from worker.core.state_store import PendingTaskStore, StateStore
+from worker.core.storage import StorageClient
 from worker.execution.execution_manager import ExecutionManager
 from worker.execution.resource_manager import ResourceManager
 from worker.grpc.reporter import CoordinatorReporter
@@ -61,8 +62,10 @@ class WorkerNode:
         self._idempotency_index: dict[str, str] = {}
         self._completed_at: dict[str, float] = {}
         self._task_lock = asyncio.Lock()
-        self._state_store = StateStore(config.state_dir)
-        self._pending_store = PendingTaskStore(config.state_dir)
+        self._storage = StorageClient.from_config(config)
+        self._state_root_uri = self._build_state_root_uri()
+        self._state_store = StateStore(self._storage, self._state_root_uri)
+        self._pending_store = PendingTaskStore(self._storage, self._state_root_uri)
         self._latest_health = NodeHealth(
             node_id=config.node_id,
             state=HealthState.NOT_READY,
@@ -74,7 +77,13 @@ class WorkerNode:
             message="worker booting",
         )
         self._health_server = HealthServer(config.health_host, config.health_port, self.current_health)
-        self._reporter = CoordinatorReporter(config=config, metrics=metrics, status_provider=self.get_node_state)
+        self._reporter = CoordinatorReporter(
+            config=config,
+            metrics=metrics,
+            status_provider=self.get_node_state,
+            storage=self._storage,
+            state_root_uri=self._state_root_uri,
+        )
         self._execution_manager = ExecutionManager(
             config=config,
             metrics=metrics,
@@ -83,6 +92,7 @@ class WorkerNode:
             handle_result=self._handle_result,
             handle_failure=self._handle_failure,
             release_resources=self._resource_manager.release,
+            storage=self._storage,
         )
 
     async def start(self) -> None:
@@ -465,3 +475,8 @@ class WorkerNode:
             "queue_position": queue_position,
             "reason": reason,
         }
+
+    def _build_state_root_uri(self) -> str:
+        if self._config.state_uri_prefix:
+            return self._storage.join(self._config.state_uri_prefix, self._config.node_id)
+        return str(self._config.state_dir)

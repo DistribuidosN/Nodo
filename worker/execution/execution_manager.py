@@ -12,12 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from worker.config import WorkerConfig
+from worker.core.storage import StorageClient
 from worker.execution.image_processor import (
     TaskCancelledError,
     load_input_bytes,
     persist_output_bytes,
     process_image,
     process_transform_stage,
+    resolve_output_uri,
 )
 from worker.models.types import (
     ExecutionResultRecord,
@@ -82,6 +84,7 @@ class ExecutionManager:
         handle_result,
         handle_failure,
         release_resources,
+        storage: StorageClient | None = None,
     ) -> None:
         self._config = config
         self._metrics = metrics
@@ -90,6 +93,7 @@ class ExecutionManager:
         self._handle_result = handle_result
         self._handle_failure = handle_failure
         self._release_resources = release_resources
+        self._storage = storage or StorageClient()
         self._thread_pool = ThreadPoolExecutor(max_workers=config.thread_pool_workers)
         self._active: dict[str, RunningTask] = {}
         self._semaphore = asyncio.Semaphore(config.max_active_tasks)
@@ -103,6 +107,13 @@ class ExecutionManager:
     async def start_task(self, task: Task, requirements: ResourceRequirements) -> None:
         await self._semaphore.acquire()
         task.attempt += 1
+        if self._config.output_uri_prefix and "output_uri" not in task.metadata:
+            task.metadata.setdefault("output_uri_prefix", self._config.output_uri_prefix)
+        if self._config.ocr_command and "ocr_command" not in task.metadata:
+            task.metadata["ocr_command"] = self._config.ocr_command
+        if self._config.inference_command and "inference_command" not in task.metadata:
+            task.metadata["inference_command"] = self._config.inference_command
+        task.metadata.setdefault("adapter_timeout_seconds", str(self._config.adapter_timeout_seconds))
         queue_wait_ms = int((time.monotonic() - task.enqueued_at_monotonic) * 1000)
         task.status = TaskState.RUNNING
         executor_kind = self._pick_executor(task)
@@ -221,7 +232,14 @@ class ExecutionManager:
                 executor_kind=executor_kind,
             )
 
-        future = loop.run_in_executor(self._executor_for(executor_kind), process_image, task, str(self._config.output_dir))
+        future = loop.run_in_executor(
+            self._executor_for(executor_kind),
+            process_image,
+            task,
+            str(self._config.output_dir),
+            self._storage,
+            self._config.output_uri_prefix,
+        )
         return RunningTask(
             task=task,
             requirements=requirements,
@@ -265,14 +283,22 @@ class ExecutionManager:
             result_queue.join_thread()
 
     async def _run_dedicated_pipeline(self, task: Task) -> tuple[str, str, int, int, int, dict[str, str]]:
-        payload, current_format = load_input_bytes(task)
+        payload, current_format = load_input_bytes(task, self._storage)
         width = task.input_image.width
         height = task.input_image.height
         metadata: dict[str, str] = {"processor": "pillow", "pipeline_mode": "stage_process"}
 
         if not task.transforms:
             output_format = (task.output_format or current_format or "png").lower()
-            output_path, size_bytes = persist_output_bytes(task.task_id, payload, output_format, str(self._config.output_dir))
+            output_uri = resolve_output_uri(task, output_format, self._config.output_uri_prefix)
+            output_path, size_bytes = persist_output_bytes(
+                task.task_id,
+                payload,
+                output_format,
+                str(self._config.output_dir),
+                self._storage,
+                output_uri=output_uri,
+            )
             return str(output_path), output_format, width, height, size_bytes, metadata
 
         for index, transform in enumerate(task.transforms):
@@ -308,7 +334,15 @@ class ExecutionManager:
             metadata.update(stage_metadata)
             self._check_cancel_token(task)
 
-        output_path, size_bytes = persist_output_bytes(task.task_id, payload, current_format, str(self._config.output_dir))
+        output_uri = resolve_output_uri(task, current_format, self._config.output_uri_prefix)
+        output_path, size_bytes = persist_output_bytes(
+            task.task_id,
+            payload,
+            current_format,
+            str(self._config.output_dir),
+            self._storage,
+            output_uri=output_uri,
+        )
         return str(output_path), current_format, width, height, size_bytes, metadata
 
     async def _terminate_process(self, process: multiprocessing.Process) -> None:
@@ -396,7 +430,7 @@ class ExecutionManager:
             height=0,
             size_bytes=0,
             error_code="cancelled",
-            error_message="task cancelled via dedicated child process termination",
+            error_message="task cancelled",
             started_at=running.started_at,
             finished_at=datetime.now(tz=UTC),
         )

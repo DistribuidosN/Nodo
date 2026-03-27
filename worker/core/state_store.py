@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -14,29 +14,49 @@ from worker.core.serde import (
     task_from_dict,
     task_to_dict,
 )
-from worker.models.types import ExecutionResultRecord, PersistedTaskRecord, ProgressEventRecord, SpoolEventRecord, Task, TaskState
+from worker.core.storage import StorageClient
+from worker.models.types import ExecutionResultRecord, PersistedTaskRecord, ProgressEventRecord, SpoolEventRecord, Task
 
 
-def _atomic_write(path: Path, payload: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    tmp.replace(path)
+def _safe_name(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 class StateStore:
-    def __init__(self, state_dir: Path) -> None:
-        self._state_dir = state_dir
-        self._state_file = state_dir / "completed_tasks.jsonl"
+    def __init__(self, storage: StorageClient | str, root_uri: str | None = None) -> None:
+        if isinstance(storage, StorageClient):
+            self._storage = storage
+            self._root_uri = root_uri or ""
+        else:
+            self._storage = StorageClient()
+            self._root_uri = str(storage)
+        self._completed_dir = self._storage.join(self._root_uri, "completed_tasks")
+        self._legacy_state_file = self._storage.join(self._root_uri, "completed_tasks.jsonl")
 
     def ensure(self) -> None:
-        self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._state_file.touch(exist_ok=True)
+        self._storage.mkdir(self._completed_dir)
 
     def load_completed(self) -> dict[str, PersistedTaskRecord]:
         self.ensure()
         records: dict[str, PersistedTaskRecord] = {}
-        with self._state_file.open("r", encoding="utf-8") as handle:
-            for line in handle:
+        for uri in self._storage.list_uris(self._completed_dir, suffix=".json"):
+            payload = json.loads(self._storage.read_text(uri))
+            result = result_from_dict(payload["result"])
+            records[payload["idempotency_key"]] = PersistedTaskRecord(
+                task_id=result.task_id,
+                idempotency_key=payload["idempotency_key"],
+                image_id=result.image_id,
+                state=result.state,
+                finished_at=result.finished_at or payload["result"]["finished_at"],
+                output_path=result.output_path,
+                output_format=result.output_format,
+                error_code=result.error_code,
+                error_message=result.error_message,
+            )
+
+        if self._storage.exists(self._legacy_state_file):
+            legacy_payload = self._storage.read_text(self._legacy_state_file)
+            for line in legacy_payload.splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -58,42 +78,52 @@ class StateStore:
     def append_result(self, result: ExecutionResultRecord, idempotency_key: str) -> None:
         self.ensure()
         payload = {"idempotency_key": idempotency_key, "result": result_to_dict(result)}
-        with self._state_file.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        uri = self._storage.join(self._completed_dir, f"{_safe_name(idempotency_key)}.json")
+        self._storage.write_text(uri, json.dumps(payload, ensure_ascii=True))
 
 
 class PendingTaskStore:
-    def __init__(self, state_dir: Path) -> None:
-        self._pending_dir = state_dir / "pending_tasks"
+    def __init__(self, storage: StorageClient | str, root_uri: str | None = None) -> None:
+        if isinstance(storage, StorageClient):
+            self._storage = storage
+            self._pending_dir = self._storage.join(root_uri or "", "pending_tasks")
+        else:
+            self._storage = StorageClient()
+            self._pending_dir = self._storage.join(str(storage), "pending_tasks")
 
     def ensure(self) -> None:
-        self._pending_dir.mkdir(parents=True, exist_ok=True)
+        self._storage.mkdir(self._pending_dir)
 
     def upsert(self, task: Task) -> None:
         self.ensure()
-        path = self._pending_dir / f"{task.task_id}.json"
-        _atomic_write(path, json.dumps(task_to_dict(task), ensure_ascii=True))
+        uri = self._storage.join(self._pending_dir, f"{_safe_name(task.task_id)}.json")
+        self._storage.write_text(uri, json.dumps(task_to_dict(task), ensure_ascii=True))
 
     def remove(self, task_id: str) -> None:
-        path = self._pending_dir / f"{task_id}.json"
-        if path.exists():
-            path.unlink()
+        uri = self._storage.join(self._pending_dir, f"{_safe_name(task_id)}.json")
+        if self._storage.exists(uri):
+            self._storage.delete(uri)
 
     def load_all(self) -> list[Task]:
         self.ensure()
         tasks: list[Task] = []
-        for path in sorted(self._pending_dir.glob("*.json")):
-            payload = json.loads(path.read_text(encoding="utf-8"))
+        for uri in self._storage.list_uris(self._pending_dir, suffix=".json"):
+            payload = json.loads(self._storage.read_text(uri))
             tasks.append(task_from_dict(payload))
         return tasks
 
 
 class EventSpoolStore:
-    def __init__(self, state_dir: Path) -> None:
-        self._spool_dir = state_dir / "event_spool"
+    def __init__(self, storage: StorageClient | str, root_uri: str | None = None) -> None:
+        if isinstance(storage, StorageClient):
+            self._storage = storage
+            self._spool_dir = self._storage.join(root_uri or "", "event_spool")
+        else:
+            self._storage = StorageClient()
+            self._spool_dir = self._storage.join(str(storage), "event_spool")
 
     def ensure(self) -> None:
-        self._spool_dir.mkdir(parents=True, exist_ok=True)
+        self._storage.mkdir(self._spool_dir)
 
     def append(self, kind: str, payload: ProgressEventRecord | ExecutionResultRecord) -> str:
         self.ensure()
@@ -103,20 +133,23 @@ class EventSpoolStore:
             event_payload = progress_to_dict(payload)
         else:
             event_payload = result_to_dict(payload)
-        path = self._spool_dir / f"{event_id}.json"
-        _atomic_write(path, json.dumps({"spool_id": event_id, "kind": kind, "payload": event_payload}, ensure_ascii=True))
+        uri = self._storage.join(self._spool_dir, f"{event_id}.json")
+        self._storage.write_text(
+            uri,
+            json.dumps({"spool_id": event_id, "kind": kind, "payload": event_payload}, ensure_ascii=True),
+        )
         return event_id
 
     def ack(self, spool_id: str) -> None:
-        path = self._spool_dir / f"{spool_id}.json"
-        if path.exists():
-            path.unlink()
+        uri = self._storage.join(self._spool_dir, f"{spool_id}.json")
+        if self._storage.exists(uri):
+            self._storage.delete(uri)
 
     def load_pending(self) -> list[SpoolEventRecord]:
         self.ensure()
         entries: list[SpoolEventRecord] = []
-        for path in sorted(self._spool_dir.glob("*.json")):
-            payload = json.loads(path.read_text(encoding="utf-8"))
+        for uri in self._storage.list_uris(self._spool_dir, suffix=".json"):
+            payload = json.loads(self._storage.read_text(uri))
             if payload["kind"] == "progress":
                 parsed_payload = progress_from_dict(payload["payload"])
             else:
