@@ -8,6 +8,7 @@ import signal
 import grpc
 
 from coordinator.config import CoordinatorConfig
+from coordinator.health import CoordinatorHealthServer
 from coordinator.runtime import CoordinatorRuntime
 from proto import imagenode_pb2, imagenode_pb2_grpc, worker_node_pb2_grpc
 from worker.grpc.security import build_server_credentials
@@ -85,6 +86,8 @@ async def run_coordinator() -> None:
     configure_logging(config.log_level)
     runtime = CoordinatorRuntime(config)
     await runtime.start()
+    health_server = CoordinatorHealthServer(config.health_host, config.health_port, runtime.current_health)
+    health_server.start()
 
     server = grpc.aio.server()
     imagenode_pb2_grpc.add_ImageNodeServiceServicer_to_server(CoordinatorBusinessServicer(runtime), server)
@@ -106,6 +109,7 @@ async def run_coordinator() -> None:
 
     async def _shutdown() -> None:
         await runtime.close()
+        health_server.stop()
         await server.stop(grace=max(1, math.ceil(config.dispatch_wait_seconds * 10)))
 
     def _request_shutdown() -> None:
@@ -119,6 +123,7 @@ async def run_coordinator() -> None:
         await server.wait_for_termination()
     finally:
         await runtime.close()
+        health_server.stop()
         await server.stop(grace=3)
 
 

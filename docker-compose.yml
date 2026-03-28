@@ -1,47 +1,231 @@
 services:
-  coordinator:
-    build:
-      context: .
-    command: ["python", "-m", "coordinator"]
-    environment:
-      COORDINATOR_BIND_HOST: 0.0.0.0
-      COORDINATOR_BIND_PORT: 50052
-      COORDINATOR_STATE_DIR: /app/data/state
-      COORDINATOR_WORKERS: worker-1=worker1:50051,worker-2=worker2:50051,worker-3=worker3:50051
-    ports:
-      - "50052:50052"
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - coordinator-data:/app/data
+      - redis-data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',50052),2); s.close()"]
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_access_key
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_secret_key
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]
       interval: 10s
       timeout: 3s
-      retries: 5
-      start_period: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-lc"]
+    command: >
+      "mc alias set local http://minio:9000 $(cat /run/secrets/minio_access_key) $(cat /run/secrets/minio_secret_key) &&
+       mc mb --ignore-existing local/distributed-state &&
+       mc mb --ignore-existing local/distributed-output"
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+
+  coordinator1:
+    build:
+      context: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "export COORDINATOR_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
+         export COORDINATOR_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
+         python -m coordinator"
+      ]
+    environment:
+      COORDINATOR_NODE_ID: coordinator-cluster
+      COORDINATOR_CLUSTER_ID: coordinator-cluster
+      COORDINATOR_INSTANCE_ID: coordinator-1
+      COORDINATOR_BIND_HOST: 0.0.0.0
+      COORDINATOR_BIND_PORT: 50052
+      COORDINATOR_HEALTH_HOST: 0.0.0.0
+      COORDINATOR_HEALTH_PORT: 8080
+      COORDINATOR_STATE_URI_PREFIX: s3://distributed-state/coordinators
+      COORDINATOR_REQUIRE_SHARED_STORAGE: "true"
+      COORDINATOR_STORAGE_ENDPOINT_URL: http://minio:9000
+      COORDINATOR_STORAGE_REGION: us-east-1
+      COORDINATOR_STORAGE_FORCE_PATH_STYLE: "true"
+      COORDINATOR_WORKERS: worker-1=worker1:50051,worker-2=worker2:50051,worker-3=worker3:50051
+      COORDINATOR_REDIS_URL: redis://redis:6379/0
+      COORDINATOR_LEADER_LOCK_TTL_SECONDS: 10
+      COORDINATOR_GRPC_SERVER_CERT_FILE: /run/secrets/coordinator_server_cert
+      COORDINATOR_GRPC_SERVER_KEY_FILE: /run/secrets/coordinator_server_key
+      COORDINATOR_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
+      COORDINATOR_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
+      COORDINATOR_WORKER_CA_FILE: /run/secrets/root_ca_cert
+      COORDINATOR_WORKER_CLIENT_CERT_FILE: /run/secrets/coordinator_client_cert
+      COORDINATOR_WORKER_CLIENT_KEY_FILE: /run/secrets/coordinator_client_key
+      COORDINATOR_WORKER_SERVER_NAME_OVERRIDE: worker.service
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+      - root_ca_cert
+      - coordinator_server_cert
+      - coordinator_server_key
+      - coordinator_client_cert
+      - coordinator_client_key
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/livez"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  coordinator2:
+    build:
+      context: .
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "export COORDINATOR_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
+         export COORDINATOR_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
+         python -m coordinator"
+      ]
+    environment:
+      COORDINATOR_NODE_ID: coordinator-cluster
+      COORDINATOR_CLUSTER_ID: coordinator-cluster
+      COORDINATOR_INSTANCE_ID: coordinator-2
+      COORDINATOR_BIND_HOST: 0.0.0.0
+      COORDINATOR_BIND_PORT: 50052
+      COORDINATOR_HEALTH_HOST: 0.0.0.0
+      COORDINATOR_HEALTH_PORT: 8080
+      COORDINATOR_STATE_URI_PREFIX: s3://distributed-state/coordinators
+      COORDINATOR_REQUIRE_SHARED_STORAGE: "true"
+      COORDINATOR_STORAGE_ENDPOINT_URL: http://minio:9000
+      COORDINATOR_STORAGE_REGION: us-east-1
+      COORDINATOR_STORAGE_FORCE_PATH_STYLE: "true"
+      COORDINATOR_WORKERS: worker-1=worker1:50051,worker-2=worker2:50051,worker-3=worker3:50051
+      COORDINATOR_REDIS_URL: redis://redis:6379/0
+      COORDINATOR_LEADER_LOCK_TTL_SECONDS: 10
+      COORDINATOR_GRPC_SERVER_CERT_FILE: /run/secrets/coordinator_server_cert
+      COORDINATOR_GRPC_SERVER_KEY_FILE: /run/secrets/coordinator_server_key
+      COORDINATOR_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
+      COORDINATOR_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
+      COORDINATOR_WORKER_CA_FILE: /run/secrets/root_ca_cert
+      COORDINATOR_WORKER_CLIENT_CERT_FILE: /run/secrets/coordinator_client_cert
+      COORDINATOR_WORKER_CLIENT_KEY_FILE: /run/secrets/coordinator_client_key
+      COORDINATOR_WORKER_SERVER_NAME_OVERRIDE: worker.service
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+      - root_ca_cert
+      - coordinator_server_cert
+      - coordinator_server_key
+      - coordinator_client_cert
+      - coordinator_client_key
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/livez"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  coordinator-lb:
+    image: haproxy:3.0-alpine
+    depends_on:
+      coordinator1:
+        condition: service_started
+      coordinator2:
+        condition: service_started
+    volumes:
+      - ./deploy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "50052:50052"
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   worker1:
     build:
       context: .
     depends_on:
-      coordinator:
+      coordinator-lb:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
+         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
+         python -m worker"
+      ]
     environment:
       WORKER_NODE_ID: worker-1
       WORKER_BIND_HOST: 0.0.0.0
       WORKER_BIND_PORT: 50051
-      WORKER_COORDINATOR_TARGET: coordinator:50052
+      WORKER_COORDINATOR_TARGET: coordinator-lb:50052
       WORKER_METRICS_HOST: 0.0.0.0
       WORKER_METRICS_PORT: 9101
       WORKER_HEALTH_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 8081
       WORKER_OUTPUT_DIR: /app/data/out
       WORKER_STATE_DIR: /app/data/state
+      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-1
+      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
+      WORKER_REQUIRE_SHARED_STORAGE: "true"
+      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
+      WORKER_STORAGE_REGION: us-east-1
+      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
+      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
+      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
+      WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
+      WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
+      WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
+      WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
+      WORKER_COORDINATOR_CA_FILE: /run/secrets/root_ca_cert
+      WORKER_COORDINATOR_CLIENT_CERT_FILE: /run/secrets/worker_client_cert
+      WORKER_COORDINATOR_CLIENT_KEY_FILE: /run/secrets/worker_client_key
+      WORKER_COORDINATOR_SERVER_NAME_OVERRIDE: coordinator.service
     ports:
       - "50051:50051"
       - "8081:8081"
       - "9101:9101"
     volumes:
       - worker1-data:/app/data
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+      - root_ca_cert
+      - worker_server_cert
+      - worker_server_key
+      - worker_client_cert
+      - worker_client_key
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
       interval: 15s
@@ -53,25 +237,59 @@ services:
     build:
       context: .
     depends_on:
-      coordinator:
+      coordinator-lb:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
+         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
+         python -m worker"
+      ]
     environment:
       WORKER_NODE_ID: worker-2
       WORKER_BIND_HOST: 0.0.0.0
       WORKER_BIND_PORT: 50051
-      WORKER_COORDINATOR_TARGET: coordinator:50052
+      WORKER_COORDINATOR_TARGET: coordinator-lb:50052
       WORKER_METRICS_HOST: 0.0.0.0
       WORKER_METRICS_PORT: 9102
       WORKER_HEALTH_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 8082
       WORKER_OUTPUT_DIR: /app/data/out
       WORKER_STATE_DIR: /app/data/state
+      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-2
+      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
+      WORKER_REQUIRE_SHARED_STORAGE: "true"
+      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
+      WORKER_STORAGE_REGION: us-east-1
+      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
+      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
+      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
+      WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
+      WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
+      WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
+      WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
+      WORKER_COORDINATOR_CA_FILE: /run/secrets/root_ca_cert
+      WORKER_COORDINATOR_CLIENT_CERT_FILE: /run/secrets/worker_client_cert
+      WORKER_COORDINATOR_CLIENT_KEY_FILE: /run/secrets/worker_client_key
+      WORKER_COORDINATOR_SERVER_NAME_OVERRIDE: coordinator.service
     ports:
       - "50061:50051"
       - "8082:8082"
       - "9102:9102"
     volumes:
       - worker2-data:/app/data
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+      - root_ca_cert
+      - worker_server_cert
+      - worker_server_key
+      - worker_client_cert
+      - worker_client_key
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
       interval: 15s
@@ -83,25 +301,59 @@ services:
     build:
       context: .
     depends_on:
-      coordinator:
+      coordinator-lb:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
+         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
+         python -m worker"
+      ]
     environment:
       WORKER_NODE_ID: worker-3
       WORKER_BIND_HOST: 0.0.0.0
       WORKER_BIND_PORT: 50051
-      WORKER_COORDINATOR_TARGET: coordinator:50052
+      WORKER_COORDINATOR_TARGET: coordinator-lb:50052
       WORKER_METRICS_HOST: 0.0.0.0
       WORKER_METRICS_PORT: 9103
       WORKER_HEALTH_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 8083
       WORKER_OUTPUT_DIR: /app/data/out
       WORKER_STATE_DIR: /app/data/state
+      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-3
+      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
+      WORKER_REQUIRE_SHARED_STORAGE: "true"
+      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
+      WORKER_STORAGE_REGION: us-east-1
+      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
+      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
+      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
+      WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
+      WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
+      WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
+      WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
+      WORKER_COORDINATOR_CA_FILE: /run/secrets/root_ca_cert
+      WORKER_COORDINATOR_CLIENT_CERT_FILE: /run/secrets/worker_client_cert
+      WORKER_COORDINATOR_CLIENT_KEY_FILE: /run/secrets/worker_client_key
+      WORKER_COORDINATOR_SERVER_NAME_OVERRIDE: coordinator.service
     ports:
       - "50071:50051"
       - "8083:8083"
       - "9103:9103"
     volumes:
       - worker3-data:/app/data
+    secrets:
+      - minio_access_key
+      - minio_secret_key
+      - root_ca_cert
+      - worker_server_cert
+      - worker_server_key
+      - worker_client_cert
+      - worker_client_key
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
       interval: 15s
@@ -109,8 +361,33 @@ services:
       retries: 5
       start_period: 15s
 
+secrets:
+  minio_access_key:
+    file: ./.secrets/minio_access_key.txt
+  minio_secret_key:
+    file: ./.secrets/minio_secret_key.txt
+  root_ca_cert:
+    file: ./.secrets/pki/root-ca.crt
+  coordinator_server_cert:
+    file: ./.secrets/pki/coordinator-server.crt
+  coordinator_server_key:
+    file: ./.secrets/pki/coordinator-server.key
+  coordinator_client_cert:
+    file: ./.secrets/pki/coordinator-client.crt
+  coordinator_client_key:
+    file: ./.secrets/pki/coordinator-client.key
+  worker_server_cert:
+    file: ./.secrets/pki/worker-server.crt
+  worker_server_key:
+    file: ./.secrets/pki/worker-server.key
+  worker_client_cert:
+    file: ./.secrets/pki/worker-client.crt
+  worker_client_key:
+    file: ./.secrets/pki/worker-client.key
+
 volumes:
-  coordinator-data:
+  redis-data:
+  minio-data:
   worker1-data:
   worker2-data:
   worker3-data:

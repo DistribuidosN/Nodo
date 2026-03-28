@@ -37,7 +37,7 @@ Bucaramanga, Colombia
 \maketitle
 
 \begin{abstract}
-Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador funcional para despacho global, cola central durable, ownership global por solicitud, cola de prioridad por nodo, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca principalmente en la capa worker y en su integración con el plano de coordinación. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperación ante fallos.
+Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un clúster de coordinadores activo/pasivo con failover real, cola central durable, ownership global por solicitud, cola de prioridad por nodo, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks, mTLS, almacenamiento compartido y persistencia durable de estado y eventos. La propuesta se enfoca principalmente en la capa worker y en su integración con el plano de coordinación. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas y una demo segura extremo a extremo.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -62,10 +62,10 @@ El alcance del prototipo cubre:
 \item persistencia durable de pendientes, resultados y spool de eventos.
 \end{itemize}
 
-Quedaron fuera de alcance: frontend, autenticación, base de datos completa, backend de negocio completo y alta disponibilidad del coordinador. Para validación local y pruebas de integración se implementó un coordinador funcional de una sola instancia.
+Quedaron fuera de alcance: frontend, autenticación de usuario final, base de datos de negocio completa y un backend corporativo ajeno a la capa distribuida. Para validación local y despliegue se implementó un clúster de coordinadores activo/pasivo con HAProxy, Redis y MinIO, suficiente para demostrar failover, despacho global y storage compartido obligatorio.
 
 \section{Arquitectura general del prototipo}
-La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: un coordinador funcional centralizado, tres workers con la misma imagen de despliegue y un backend de almacenamiento configurable.
+La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: un clúster coordinador activo/pasivo publicado por un endpoint gRPC único, tres workers con la misma imagen de despliegue y un backend de almacenamiento compartido.
 
 \begin{figure*}[t]
 \centering
@@ -80,7 +80,7 @@ La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: 
   callback/.style={-{Latex[length=2.5mm]}, ultra thick, green!50!black},
   sharedarrow/.style={-{Latex[length=2.3mm]}, thick, gray!70}
 ]
-\node[service] (coord) at (0,4.6) {Coordinador funcional\\endpoint gRPC};
+\node[service] (coord) at (0,4.6) {Clúster coordinador\\HAProxy + Redis};
 \node[worker] (w1) at (-5.2,2.45) {Worker 1\\\texttt{127.0.0.1:50051}};
 \node[worker] (w2) at (0,2.45) {Worker 2\\\texttt{127.0.0.1:50061}};
 \node[worker] (w3) at (5.2,2.45) {Worker 3\\\texttt{127.0.0.1:50071}};
@@ -113,7 +113,7 @@ La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: 
 \draw[sharedarrow] (w2.east) -- (obs.west);
 \draw[sharedarrow] (w3.south) -- ($(obs.north)+(1.05,0)$);
 \end{tikzpicture}
-\caption{Arquitectura del prototipo. Azul: RPC de control desde el coordinador hacia cada worker. Verde: callbacks del worker hacia el coordinador. Gris: acceso a storage, métricas y healthchecks.}
+\caption{Arquitectura del prototipo. Azul: RPC de control desde el coordinador activo hacia cada worker. Verde: callbacks del worker hacia el endpoint gRPC publicado por el clúster coordinador. Gris: acceso a storage, métricas y healthchecks.}
 \label{fig:architecture}
 \end{figure*}
 
@@ -310,12 +310,12 @@ El prototipo expone:
 \item \texttt{/livez} y \texttt{/readyz};
 \item logs estructurados;
 \item tracing distribuido opcional con OpenTelemetry y exportación OTLP;
-\item mTLS opcional en el servidor gRPC del worker y en el canal hacia el coordinador;
+\item mTLS obligatorio en el despliegue contenedorizado y opcional en ejecución local;
 \item despliegue local con \texttt{docker compose};
-\item tres instancias worker y un coordinador funcional.
+\item tres instancias worker, dos coordinadores activo/pasivo, Redis, MinIO y HAProxy.
 \end{itemize}
 
-El estado de readiness considera cola, memoria disponible y conectividad hacia el coordinador. Las métricas más relevantes incluyen longitud de cola, tiempos de espera, latencia de procesamiento, retry count, utilization de recursos, tareas activas, cancelaciones y conectividad gRPC.
+El estado de readiness del worker considera cola, memoria disponible y conectividad hacia el coordinador. En el coordinador, \texttt{/readyz} representa liderazgo activo y permite que HAProxy publique solo la instancia líder. Las métricas más relevantes incluyen longitud de cola, tiempos de espera, latencia de procesamiento, retry count, utilization de recursos, tareas activas, cancelaciones y conectividad gRPC.
 
 \section{Validación del prototipo}
 El repositorio fue validado con pruebas unitarias e integración sobre los componentes de:
@@ -327,30 +327,25 @@ El repositorio fue validado con pruebas unitarias e integración sobre los compo
 \item comunicación worker--coordinador.
 \end{itemize}
 
-La ejecución final de la suite arrojó veintidós pruebas aprobadas. Esto confirma que el worker y el coordinador funcional son ejecutables, capaces de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
+La ejecución final de la suite arrojó veintidós pruebas aprobadas. Adicionalmente se validó una demo segura extremo a extremo sobre el endpoint publicado por HAProxy y se simuló la caída del coordinador líder, observando toma de liderazgo del follower sin cambiar el endpoint público. Esto confirma que el worker y el clúster coordinador son ejecutables, capaces de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos del plano de control.
 
-\section{Delimitación del prototipo y evolución}
-\noindent\textbf{Capacidades ya implementadas.}
+\section{Cierre del prototipo}
+\noindent\textbf{Capacidades consolidadas.}
 \begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
 \item tres nodos worker funcionales con el mismo runtime y despliegue contenedorizado;
 \item cola de prioridad, scheduler local, control de admisión, backpressure y retries;
 \item persistencia durable de pendientes, resultados, cola global del coordinador y spool de eventos;
 \item procesamiento paralelo de imágenes con cancelación, métricas, healthchecks y callbacks gRPC;
-\item soporte para almacenamiento local o compartido y extensiones desacopladas para OCR e inferencia.
+\item coordinación global con cola central durable, ownership por solicitud, deduplicación y despacho entre workers;
+\item soporte para almacenamiento compartido obligatorio en el despliegue contenedorizado, búsqueda de resultados, lotes y extensiones concretas de OCR e inferencia.
 \end{itemize}
 
-\noindent\textbf{Delimitaciones de arquitectura.}
-\begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
-\item la propiedad de la cola de ejecución sigue siendo local por nodo por diseño; el coordinador aporta ownership global por solicitud, pero no un middleware de consenso multi-owner entre coordinadores;
-\item el coordinador incluido en el repositorio ya resuelve cola central durable, despacho global, deduplicación por fingerprint y callbacks, pero opera como una sola instancia y todavía no replica su estado ni realiza failover automático;
-\item OCR e inferencia ya están contemplados mediante adaptadores configurables; los modelos o binarios concretos quedan como decisión operativa del despliegue;
-\item el balanceo global entre workers corresponde al coordinador, mientras que el worker expone estado, capacidad, heartbeats, métricas y drenado para soportar esa decisión global.
-\end{itemize}
+En el resultado final, el balanceo global queda centralizado en el coordinador y el procesamiento intensivo se mantiene aislado en los workers. Esta separación conserva responsabilidades claras: el coordinador decide, despacha y agrega estado del clúster, mientras cada worker prioriza, admite, ejecuta, persiste y reporta sus tareas.
 
-\noindent\textbf{Evolución natural del sistema.}
-La siguiente etapa no consiste en rehacer el worker, sino en endurecer el coordinador funcional ya implementado: replicación de estado, despliegue multi-instancia, failover automático y políticas más sofisticadas de asignación sobre la capacidad agregada del clúster.
+\noindent\textbf{Proyección de evolución.}
+Sobre esta base ya funcional pueden añadirse, sin rehacer la arquitectura del worker, modos activo-activo con consenso distribuido, políticas de asignación más sofisticadas y modelos de inferencia de mayor tamaño.
 
 \section{Conclusiones}
-Se implementó exitosamente un subsistema de workers distribuidos para procesamiento de imágenes con Python, \texttt{asyncio} y gRPC. El resultado no es un diagrama teórico sino un prototipo ejecutable con tres nodos, durabilidad local o compartida, control de admisión, cancelación, retries, observabilidad y despliegue en contenedores. La arquitectura lograda separa de forma clara coordinación, scheduling, ejecución y reporte, lo que la vuelve apta como base para una evolución posterior hacia un sistema distribuido productivo.
+Se implementó exitosamente un subsistema de workers distribuidos para procesamiento de imágenes con Python, \texttt{asyncio} y gRPC. El resultado no es un diagrama teórico sino un prototipo ejecutable con tres nodos worker, clúster coordinador con failover real, storage compartido, control de admisión, cancelación, retries, observabilidad, OCR concreto con Tesseract, inferencia concreta y despliegue seguro en contenedores. La arquitectura lograda separa de forma clara coordinación, scheduling, ejecución y reporte, lo que la vuelve apta como base para una evolución posterior hacia un sistema distribuido productivo.
 
 \end{document}

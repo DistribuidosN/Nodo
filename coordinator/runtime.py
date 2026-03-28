@@ -11,6 +11,8 @@ from datetime import UTC, datetime, timedelta
 import grpc
 
 from coordinator.config import CoordinatorConfig
+from coordinator.health import CoordinatorHealthSnapshot
+from coordinator.leadership import CoordinatorLeaderElector
 from coordinator.state_store import (
     CoordinatorPendingStore,
     CoordinatorProcessedStore,
@@ -105,7 +107,14 @@ class CoordinatorRuntime:
         self._sequence = 0
         self._dispatch_tasks: list[asyncio.Task] = []
         self._poller_task: asyncio.Task | None = None
+        self._sync_lock = asyncio.Lock()
         self._workers = self._build_workers()
+        self._leader = CoordinatorLeaderElector(
+            redis_url=self._config.redis_url,
+            cluster_id=self._config.cluster_id,
+            instance_id=self._config.instance_id,
+            lock_ttl_seconds=self._config.leader_lock_ttl_seconds,
+        )
         self._storage = StorageClient(
             endpoint_url=self._config.storage_endpoint_url,
             access_key_id=self._config.storage_access_key_id,
@@ -113,8 +122,10 @@ class CoordinatorRuntime:
             region=self._config.storage_region,
             force_path_style=self._config.storage_force_path_style,
         )
+        if self._config.require_shared_storage and not self._config.state_uri_prefix:
+            raise RuntimeError("shared storage is required: COORDINATOR_STATE_URI_PREFIX must be configured")
         self._state_root = (
-            self._storage.join(self._config.state_uri_prefix, self._config.node_id)
+            self._storage.join(self._config.state_uri_prefix, self._config.cluster_id)
             if self._config.state_uri_prefix
             else str(self._config.state_dir)
         )
@@ -122,6 +133,7 @@ class CoordinatorRuntime:
         self._processed_store = CoordinatorProcessedStore(self._storage, self._state_root)
 
     async def start(self) -> None:
+        await self._leader.start()
         self._restore_state()
         self._poller_task = asyncio.create_task(self._poll_status_loop(), name="coordinator-status-poller")
         for index in range(self._config.dispatch_concurrency):
@@ -137,6 +149,7 @@ class CoordinatorRuntime:
             task.cancel()
         if self._dispatch_tasks:
             await asyncio.gather(*self._dispatch_tasks, return_exceptions=True)
+        await self._leader.stop()
         for worker in self._workers.values():
             await worker.control_channel.close()
             await worker.business_channel.close()
@@ -210,9 +223,13 @@ class CoordinatorRuntime:
         ready_workers = self.ready_workers
         return imagenode_pb2.HealthCheckResponse(
             is_alive=True,
-            is_ready=ready_workers > 0,
-            node_id=self._config.node_id,
-            message=f"known_workers={len(self._workers)} ready_workers={ready_workers} queue={self._queue.qsize()} inflight={self.active_ownerships}",
+            is_ready=self._leader.is_leader,
+            node_id=self._config.instance_id,
+            message=(
+                f"cluster={self._config.cluster_id} leader={self._leader.is_leader} "
+                f"holder={self._leader.holder or 'none'} known_workers={len(self._workers)} "
+                f"ready_workers={ready_workers} queue={self._queue.qsize()} inflight={self.active_ownerships}"
+            ),
         )
 
     async def get_metrics(self) -> imagenode_pb2.MetricsResponse:
@@ -225,6 +242,7 @@ class CoordinatorRuntime:
                 "ready_workers": float(self.ready_workers),
                 "processed_records": float(len(self._processed_by_request_key)),
                 "active_ownerships": float(self.active_ownerships),
+                "coordinator_is_leader": 1.0 if self._leader.is_leader else 0.0,
             }
         )
         for worker in self._workers.values():
@@ -361,6 +379,26 @@ class CoordinatorRuntime:
     def get_record(self, file_name: str) -> ProcessedRecord | None:
         return self._processed.get(file_name)
 
+    def current_health(self) -> CoordinatorHealthSnapshot:
+        ready_workers = self.ready_workers
+        ready = self._leader.is_leader
+        message = (
+            f"cluster={self._config.cluster_id} instance={self._config.instance_id} "
+            f"leader={self._leader.is_leader} holder={self._leader.holder or 'none'} "
+            f"ready_workers={ready_workers} queue={self._queue.qsize()} inflight={self.active_ownerships}"
+        )
+        return CoordinatorHealthSnapshot(
+            node_id=self._config.instance_id,
+            cluster_id=self._config.cluster_id,
+            leader=self._leader.is_leader,
+            live=True,
+            ready=ready,
+            ready_workers=ready_workers,
+            active_ownerships=self.active_ownerships,
+            queue_length=self._queue.qsize(),
+            message=message,
+        )
+
     def _build_workers(self) -> dict[str, WorkerEndpointState]:
         workers: dict[str, WorkerEndpointState] = {}
         credentials = build_channel_credentials(
@@ -430,6 +468,9 @@ class CoordinatorRuntime:
 
     async def _dispatch_loop(self, _: int) -> None:
         while not self._stop_event.is_set():
+            if not self._leader.is_leader:
+                await asyncio.sleep(self._config.dispatch_wait_seconds)
+                continue
             job = await self._queue.get()
             try:
                 slot = self._slots.get(job.request_key)
@@ -607,6 +648,7 @@ class CoordinatorRuntime:
                 worker.last_seen_monotonic = time.monotonic()
                 worker.connected = True
             await self._requeue_expired_leases()
+            await self._sync_state_from_store()
             await asyncio.sleep(self._config.status_poll_seconds)
 
     def _request_key(self, request: imagenode_pb2.ProcessRequest) -> str:
@@ -760,8 +802,59 @@ class CoordinatorRuntime:
             restored.append(slot)
         self._metrics["restored_pending_total"] = float(len(restored))
         for slot in restored:
-            if slot.owner_node_id is None:
+            if self._leader.is_leader and slot.owner_node_id is None:
                 asyncio.get_running_loop().create_task(self._enqueue_slot(slot))
+
+    async def _sync_state_from_store(self) -> None:
+        async with self._sync_lock:
+            for record in self._processed_store.load_all():
+                current = self._processed_by_request_key.get(record.request_key)
+                if current is not None and current.updated_at >= record.updated_at:
+                    continue
+                processed = ProcessedRecord(
+                    request_key=record.request_key,
+                    file_name=record.file_name,
+                    result_path=record.result_path,
+                    image_data=record.image_data,
+                    node_id=record.node_id,
+                    message=record.message,
+                    updated_at=record.updated_at,
+                )
+                self._register_processed_record(processed, persist=False)
+                if slot := self._slots.get(record.request_key):
+                    await self._resolve_slot_from_record(slot, processed)
+
+            now = datetime.now(tz=UTC)
+            for entry in self._pending_store.load_all():
+                if entry.request_key in self._processed_by_request_key:
+                    self._pending_store.remove(entry.request_key)
+                    continue
+                slot = self._slots.get(entry.request_key)
+                if slot is None:
+                    slot = RequestSlot(
+                        request_key=entry.request_key,
+                        request=entry.request,
+                        file_name=entry.file_name,
+                        preferred_kind=entry.preferred_kind,
+                        owner_node_id=entry.owner_node_id,
+                        lease_expires_at=entry.lease_expires_at,
+                        dispatch_attempts=entry.dispatch_attempts,
+                        queued=False,
+                        submitted_at=entry.submitted_at,
+                        last_error=entry.last_error,
+                    )
+                    self._slots[slot.request_key] = slot
+                else:
+                    slot.owner_node_id = entry.owner_node_id
+                    slot.lease_expires_at = entry.lease_expires_at
+                    slot.dispatch_attempts = max(slot.dispatch_attempts, entry.dispatch_attempts)
+                    slot.last_error = entry.last_error or slot.last_error
+
+                if slot.lease_expires_at and slot.lease_expires_at <= now:
+                    slot.owner_node_id = None
+                    slot.lease_expires_at = None
+                if self._leader.is_leader and slot.owner_node_id is None and not slot.queued:
+                    await self._enqueue_slot(slot)
 
     def _observe_dispatch(self, worker: WorkerEndpointState, latency_ms: float, success: bool) -> None:
         if not success and latency_ms <= 0:

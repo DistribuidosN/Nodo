@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from io import BytesIO
+from pathlib import Path
 
 import grpc
 from PIL import Image
@@ -20,9 +21,22 @@ def build_payload() -> bytes:
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default="127.0.0.1:50051")
+    parser.add_argument("--ca")
+    parser.add_argument("--cert")
+    parser.add_argument("--key")
+    parser.add_argument("--server-name")
     args = parser.parse_args()
 
-    channel = grpc.aio.insecure_channel(args.target)
+    if args.ca:
+        credentials = grpc.ssl_channel_credentials(
+            root_certificates=Path(args.ca).read_bytes(),
+            private_key=Path(args.key).read_bytes() if args.key else None,
+            certificate_chain=Path(args.cert).read_bytes() if args.cert else None,
+        )
+        options = [("grpc.ssl_target_name_override", args.server_name)] if args.server_name else None
+        channel = grpc.aio.secure_channel(args.target, credentials, options=options)
+    else:
+        channel = grpc.aio.insecure_channel(args.target)
     stub = imagenode_pb2_grpc.ImageNodeServiceStub(channel)
 
     response = await stub.ProcessToData(

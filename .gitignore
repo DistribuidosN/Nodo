@@ -29,6 +29,8 @@ pip-wheel-metadata/
 data/
 logs/
 tmp/
+.run/
+.secrets/
 *.pid
 *.tmp
 *.bak

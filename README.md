@@ -1,6 +1,6 @@
 # Distributed Image Worker
 
-Worker gRPC en Python para procesamiento distribuido de imagenes. El repositorio incluye los nodos worker y un coordinador funcional en Python para despacho global, cola central durable, ownership global por solicitud, recepcion de callbacks y exposicion del contrato de negocio.
+Plataforma distribuida en Python para procesamiento de imagenes con gRPC. El repositorio incluye tres nodos worker, un clúster de coordinadores activo/pasivo con failover real, Redis para eleccion de lider, MinIO como storage compartido obligatorio en el despliegue contenedorizado, mTLS extremo a extremo y backends concretos de OCR e inferencia.
 
 ## Decisiones principales
 
@@ -11,9 +11,11 @@ Worker gRPC en Python para procesamiento distribuido de imagenes. El repositorio
 - Canal persistente gRPC hacia un coordinador funcional para `ReportProgress`, `ReportResult` y `Heartbeat`.
 - `input_uri` y `output_uri/output_uri_prefix` soportados sobre filesystem local, `file://`, `http(s)` de solo lectura y `s3://`/MinIO.
 - Persistencia ligera de resultados, cola pendiente y spool durable sobre filesystem local o un backend compartido configurable por URI.
-- Coordinador con persistencia durable de cola global, leases de ownership por solicitud y deduplicacion/caching global por fingerprint de request.
-- OCR e inferencia integrados como adaptadores ejecutables configurables por comando, sin cambiar el contrato gRPC del worker.
+- Clúster de coordinadores activo/pasivo con eleccion de lider por Redis, estado compartido en MinIO y balanceo TCP por HAProxy.
+- Coordinador con persistencia durable de cola global, leases de ownership por solicitud, deduplicacion/caching global por fingerprint y failover probado.
+- OCR integrado con Tesseract y `pytesseract`; inferencia integrada con un modelo concreto ligero por centroides sobre features visuales.
 - Healthchecks HTTP en `/livez` y `/readyz` separados del plano gRPC.
+- mTLS obligatorio en el stack Docker, con PKI de desarrollo generada automaticamente por `run.ps1`.
 
 ## Estructura
 
@@ -36,6 +38,41 @@ examples/
 ```bash
 python -m pip install -e .[dev]
 ```
+
+Configurar variables locales:
+
+```bash
+cp .env.example .env
+```
+
+En Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+## Script unico de arranque
+
+El repositorio incluye `run.ps1` para las tareas repetitivas mas comunes:
+
+```powershell
+.\run.ps1 install
+.\run.ps1 protos
+.\run.ps1 stack
+.\run.ps1 demo
+.\run.ps1 down
+.\run.ps1 test
+```
+
+Comandos disponibles:
+
+- `install`: instala dependencias del proyecto.
+- `protos`: regenera `worker_node.proto` e `imagenode.proto`.
+- `stack`: genera PKI/secrets de desarrollo y levanta Redis + MinIO + 2 coordinadores + HAProxy + 3 workers con `docker compose`; si Docker no esta disponible, intenta arranque local como respaldo.
+- `demo`: ejecuta una corrida extremo a extremo por TLS contra el coordinador publicado en `coordinator-lb` y guarda artefactos en `docs/demo/`.
+- `down`: baja `docker compose` y detiene cualquier proceso local lanzado con `run.ps1`.
+- `test`: corre la suite de `pytest`.
+- `compose-up` y `compose-down`: controlan el despliegue por Docker.
 
 ## Generacion de protos
 
@@ -122,7 +159,7 @@ python examples/load_submitter.py --count 100 --concurrency 16
 
 ## Contenedores
 
-Levantar coordinador funcional + 3 workers:
+Levantar stack HA completo:
 
 ```bash
 docker compose up --build
@@ -130,10 +167,12 @@ docker compose up --build
 
 Servicios expuestos:
 
-- Coordinator gRPC: `127.0.0.1:50052`
+- Coordinator gRPC publicado por HAProxy: `127.0.0.1:50052`
 - Worker 1 gRPC: `127.0.0.1:50051`
 - Worker 2 gRPC: `127.0.0.1:50061`
 - Worker 3 gRPC: `127.0.0.1:50071`
+- MinIO API: `http://127.0.0.1:9000`
+- MinIO console: `http://127.0.0.1:9001`
 - Worker 1 health: `http://127.0.0.1:8081/readyz`
 - Worker 2 health: `http://127.0.0.1:8082/readyz`
 - Worker 3 health: `http://127.0.0.1:8083/readyz`
@@ -141,7 +180,7 @@ Servicios expuestos:
 - Worker 2 metrics: `http://127.0.0.1:9102`
 - Worker 3 metrics: `http://127.0.0.1:9103`
 
-Cada nodo worker es la misma aplicacion desplegada 3 veces con diferente `WORKER_NODE_ID` y puertos externos distintos. El coordinador mantiene una cola central durable de solicitudes, leases de ownership por request y despacha cada trabajo al worker mas conveniente segun estado, capacidad, latencia observada y disponibilidad.
+Cada nodo worker es la misma aplicacion desplegada 3 veces con diferente `WORKER_NODE_ID` y puertos externos distintos. El coordinador se ejecuta en dos instancias, comparte estado durable en MinIO, elige lider via Redis y publica un unico endpoint gRPC a traves de HAProxy. Solo el lider queda `ready`; el follower permanece sincronizado y asume el liderazgo si el lider cae.
 
 ## Healthchecks y metricas
 
@@ -161,16 +200,84 @@ Metricas nuevas relevantes:
 python -m pytest
 ```
 
+## Como demostrarlo en 5 minutos
+
+1. Copia la configuracion base:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+2. Instala dependencias y protos:
+
+```powershell
+.\run.ps1 install
+.\run.ps1 protos
+```
+
+3. Levanta el stack seguro:
+
+```powershell
+.\run.ps1 stack
+```
+
+4. Ejecuta la demo extremo a extremo:
+
+```powershell
+.\run.ps1 demo
+```
+
+5. Revisa los artefactos generados:
+
+- `docs/demo/demo-input.png`
+- `docs/demo/demo-output.png`
+- `docs/demo/demo-summary.json`
+- `docs/demo/demo-run.txt`
+
+6. Verifica salud y metricas:
+
+- `http://127.0.0.1:8081/readyz`
+- `http://127.0.0.1:8082/readyz`
+- `http://127.0.0.1:8083/readyz`
+- `http://127.0.0.1:9101`
+- `http://127.0.0.1:9102`
+- `http://127.0.0.1:9103`
+
+7. Prueba failover real:
+
+```powershell
+docker compose stop coordinator1
+.\run.ps1 demo
+docker compose up -d coordinator1
+```
+
+La segunda demo debe seguir funcionando y el `HealthCheck` debe reportar el otro `node_id` como lider activo.
+
+8. Deten el stack:
+
+```powershell
+.\run.ps1 down
+```
+
+La carpeta `docs/demo/` funciona como evidencia reproducible del flujo extremo a extremo.
+
 ## Variables de entorno utiles
 
 Coordinador:
 
 - `COORDINATOR_NODE_ID`
+- `COORDINATOR_CLUSTER_ID`
+- `COORDINATOR_INSTANCE_ID`
 - `COORDINATOR_BIND_HOST`
 - `COORDINATOR_BIND_PORT`
+- `COORDINATOR_HEALTH_HOST`
+- `COORDINATOR_HEALTH_PORT`
 - `COORDINATOR_STATE_DIR`
 - `COORDINATOR_STATE_URI_PREFIX`
+- `COORDINATOR_REQUIRE_SHARED_STORAGE`
 - `COORDINATOR_WORKERS`
+- `COORDINATOR_REDIS_URL`
+- `COORDINATOR_LEADER_LOCK_TTL_SECONDS`
 - `COORDINATOR_DISPATCH_CONCURRENCY`
 - `COORDINATOR_DISPATCH_WAIT_SECONDS`
 - `COORDINATOR_STATUS_POLL_SECONDS`
@@ -199,6 +306,7 @@ Coordinador:
 - `WORKER_OUTPUT_URI_PREFIX`
 - `WORKER_STATE_DIR`
 - `WORKER_STATE_URI_PREFIX`
+- `WORKER_REQUIRE_SHARED_STORAGE`
 - `WORKER_METRICS_HOST`
 - `WORKER_METRICS_PORT`
 - `WORKER_HEALTH_HOST`
@@ -216,6 +324,7 @@ Coordinador:
 - `WORKER_STORAGE_REGION`
 - `WORKER_STORAGE_FORCE_PATH_STYLE`
 - `WORKER_OCR_COMMAND`
+- `WORKER_TESSERACT_CMD`
 - `WORKER_INFERENCE_COMMAND`
 - `WORKER_ADAPTER_TIMEOUT_SECONDS`
 - `WORKER_GRPC_SERVER_CERT_FILE`
@@ -233,6 +342,7 @@ Coordinador:
 ## Hardening agregado
 
 - Reconexion gRPC con backoff exponencial y `keepalive`.
+- Clúster de coordinadores activo/pasivo con Redis para liderazgo, HAProxy para endpoint unico y failover real validado en runtime.
 - Coordinador funcional con cola central durable, leases de ownership, deduplicacion global y despacho a workers reales via `ImageNodeService`.
 - Health server listo para Docker y orquestadores.
 - Manejo de `SIGINT` y `SIGTERM` para cierre ordenado.
@@ -240,11 +350,21 @@ Coordinador:
 - Restauracion automatica de cola pendiente desde disco o `state_uri_prefix`.
 - Spool durable de progreso y resultados hasta recibir `ack` del coordinador, con replay tras reinicio.
 - Cancelacion cooperativa por defecto para las transformaciones integradas del worker. El aislamiento en proceso dedicado queda reservado para extensiones no cooperativas o cuando una tarea lo pida explicitamente con `metadata.execution_isolation=process`.
-- mTLS opcional tanto en el servidor gRPC del worker como en el canal cliente hacia el coordinador.
+- Storage compartido obligatorio en el stack Docker sobre MinIO (`s3://distributed-state` y `s3://distributed-output`).
+- OCR concreto con Tesseract y `pytesseract`; inferencia concreta con un modelo centroidal ligero incluido en el repo.
+- mTLS obligatorio en el stack Docker y opcional en ejecucion local.
 - Propagacion de trazas por metadata gRPC y soporte opcional de OpenTelemetry/OTLP.
 
-## Limitaciones actuales
+## CI
 
-- El coordinador ya persiste cola global y ownership por solicitud, pero sigue siendo de una sola instancia; todavia no hay replicacion activa, eleccion de lider ni failover automatico entre coordinadores.
-- OCR e inferencia requieren un backend ejecutable provisto por el operador.
-- No existe un log distribuido o broker compartido entre multiples coordinadores; la durabilidad actual se basa en storage persistente, no en consenso distribuido.
+La accion de GitHub en `.github/workflows/ci.yml` corre automaticamente en cada `push` y `pull_request`:
+
+- instalacion del proyecto en Python 3.11
+- regeneracion de protos
+- ejecucion de la suite `pytest`
+
+## Notas operativas
+
+- El despliegue Docker usa coordinadores activo/pasivo; no es un modo activo-activo multi-writer.
+- El backend de inferencia incluido es intencionalmente ligero para mantener el runtime portable; puede sustituirse por un modelo mayor sin cambiar el contrato gRPC.
+- Si ejecutas OCR fuera de Docker en Windows, instala Tesseract localmente y define `WORKER_TESSERACT_CMD`.

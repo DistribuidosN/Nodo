@@ -98,6 +98,7 @@ class WorkerNode:
         )
 
     async def start(self) -> None:
+        self._validate_storage_requirements()
         self._config.output_dir.mkdir(parents=True, exist_ok=True)
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         self._restore_completed_state()
@@ -528,6 +529,18 @@ class WorkerNode:
         if self._config.state_uri_prefix:
             return self._storage.join(self._config.state_uri_prefix, self._config.node_id)
         return str(self._config.state_dir)
+
+    def _validate_storage_requirements(self) -> None:
+        if not self._config.require_shared_storage:
+            return
+        if not self._config.state_uri_prefix:
+            raise RuntimeError("shared storage is required: WORKER_STATE_URI_PREFIX must be configured")
+        if not self._config.output_uri_prefix:
+            raise RuntimeError("shared storage is required: WORKER_OUTPUT_URI_PREFIX must be configured")
+        if "://" not in self._config.state_uri_prefix or self._config.state_uri_prefix.startswith("file://"):
+            raise RuntimeError("shared storage is required: WORKER_STATE_URI_PREFIX must point to a remote URI")
+        if "://" not in self._config.output_uri_prefix or self._config.output_uri_prefix.startswith("file://"):
+            raise RuntimeError("shared storage is required: WORKER_OUTPUT_URI_PREFIX must point to a remote URI")
 
     def _trace_metadata(self, task: Task) -> dict[str, str]:
         metadata: dict[str, str] = {}

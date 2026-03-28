@@ -60,6 +60,7 @@ class WorkerConfig:
     process_cancel_grace_seconds: float
     process_kill_timeout_seconds: float
     log_level: str
+    require_shared_storage: bool = False
     output_uri_prefix: str | None = None
     state_uri_prefix: str | None = None
     storage_endpoint_url: str | None = None
@@ -125,6 +126,7 @@ class WorkerConfig:
             process_cancel_grace_seconds=_get_float("WORKER_PROCESS_CANCEL_GRACE_SECONDS", 0.75),
             process_kill_timeout_seconds=_get_float("WORKER_PROCESS_KILL_TIMEOUT_SECONDS", 2.0),
             log_level=os.getenv("WORKER_LOG_LEVEL", "INFO"),
+            require_shared_storage=_get_bool("WORKER_REQUIRE_SHARED_STORAGE", False),
             output_uri_prefix=os.getenv("WORKER_OUTPUT_URI_PREFIX"),
             state_uri_prefix=os.getenv("WORKER_STATE_URI_PREFIX"),
             storage_endpoint_url=os.getenv("WORKER_STORAGE_ENDPOINT_URL"),

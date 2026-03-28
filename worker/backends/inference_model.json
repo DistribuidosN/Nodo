@@ -1,0 +1,20 @@
+{
+  "version": "centroid-model-v1",
+  "feature_order": [
+    "brightness",
+    "contrast",
+    "saturation",
+    "edge_density",
+    "aspect_ratio",
+    "color_variance"
+  ],
+  "centroids": {
+    "bright_scene": [0.82, 0.28, 0.25, 0.18, 1.30, 0.22],
+    "dark_scene": [0.18, 0.22, 0.18, 0.16, 1.20, 0.15],
+    "colorful_scene": [0.56, 0.30, 0.72, 0.24, 1.35, 0.68],
+    "monochrome_scene": [0.52, 0.20, 0.05, 0.17, 1.00, 0.04],
+    "portrait_layout": [0.58, 0.24, 0.34, 0.18, 0.72, 0.26],
+    "landscape_layout": [0.58, 0.24, 0.34, 0.18, 1.55, 0.26],
+    "high_texture": [0.48, 0.42, 0.33, 0.62, 1.05, 0.31]
+  }
+}

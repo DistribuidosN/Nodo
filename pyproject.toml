@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "boto3>=1.36.0",
+  "cryptography>=45.0.0",
   "grpcio>=1.71.0",
   "grpcio-tools>=1.71.0",
   "opentelemetry-api>=1.31.0",
@@ -18,6 +19,8 @@ dependencies = [
   "Pillow>=11.0.0",
   "prometheus-client>=0.21.0",
   "psutil>=7.0.0",
+  "pytesseract>=0.3.13",
+  "redis>=5.2.0",
 ]
 
 [project.optional-dependencies]
