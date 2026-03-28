@@ -2,7 +2,11 @@ services:
   coordinator:
     build:
       context: .
-    command: ["python", "examples/mock_coordinator.py"]
+    command: ["python", "-m", "coordinator"]
+    environment:
+      COORDINATOR_BIND_HOST: 0.0.0.0
+      COORDINATOR_BIND_PORT: 50052
+      COORDINATOR_WORKERS: worker-1=worker1:50051,worker-2=worker2:50051,worker-3=worker3:50051
     ports:
       - "50052:50052"
     healthcheck:

@@ -1,6 +1,6 @@
 # Distributed Image Worker
 
-Worker gRPC en Python para procesamiento distribuido de imagenes. Este repositorio implementa solo la parte de nodos worker: recepcion de tareas, cola de prioridad, scheduling local, ejecucion paralela, backpressure, retries, metricas, healthchecks y reporte al coordinador.
+Worker gRPC en Python para procesamiento distribuido de imagenes. El repositorio incluye los nodos worker y un coordinador funcional en Python para despacho global, balanceo basico entre workers, recepcion de callbacks, cola central de solicitudes y exposicion del contrato de negocio.
 
 ## Decisiones principales
 
@@ -8,7 +8,7 @@ Worker gRPC en Python para procesamiento distribuido de imagenes. Este repositor
 - `Pillow` para la primera version porque cubre `grayscale`, `resize`, `crop`, `rotate`, `flip`, `blur`, `sharpen`, `brightness/contrast`, `watermark/text` y conversion de formato con menor complejidad operativa que OpenCV.
 - `ThreadPoolExecutor` para el set integrado de transformaciones cooperativas y procesos dedicados solo para aislamiento explicito o extensiones no cooperativas.
 - Cola priorizada con `heapq`, score hibrido por prioridad, deadline, aging, costo estimado y tamano.
-- Canal persistente gRPC hacia un coordinador mock para `ReportProgress`, `ReportResult` y `Heartbeat`.
+- Canal persistente gRPC hacia un coordinador funcional para `ReportProgress`, `ReportResult` y `Heartbeat`.
 - `input_uri` y `output_uri/output_uri_prefix` soportados sobre filesystem local, `file://`, `http(s)` de solo lectura y `s3://`/MinIO.
 - Persistencia ligera de resultados, cola pendiente y spool durable sobre filesystem local o un backend compartido configurable por URI.
 - OCR e inferencia integrados como adaptadores ejecutables configurables por comando, sin cambiar el contrato gRPC del worker.
@@ -78,7 +78,7 @@ Sintaxis de `filters` soportada en `ImageNodeService`:
 Terminal 1:
 
 ```bash
-python examples/mock_coordinator.py
+python -m coordinator
 ```
 
 Terminal 2:
@@ -107,6 +107,12 @@ python examples/submit_task.py --target 127.0.0.1:50051
 
 La tarea puede enviar `input.input_uri` en el proto y opcionalmente `metadata["output_uri"]` o `metadata["output_uri_prefix"]`.
 
+Enviar una solicitud de negocio al coordinador:
+
+```bash
+python examples/imagenode_client.py --target 127.0.0.1:50052
+```
+
 Prueba simple de carga:
 
 ```bash
@@ -115,7 +121,7 @@ python examples/load_submitter.py --count 100 --concurrency 16
 
 ## Contenedores
 
-Levantar coordinador mock + 3 workers:
+Levantar coordinador funcional + 3 workers:
 
 ```bash
 docker compose up --build
@@ -123,7 +129,7 @@ docker compose up --build
 
 Servicios expuestos:
 
-- Coordinator mock: `127.0.0.1:50052`
+- Coordinator gRPC: `127.0.0.1:50052`
 - Worker 1 gRPC: `127.0.0.1:50051`
 - Worker 2 gRPC: `127.0.0.1:50061`
 - Worker 3 gRPC: `127.0.0.1:50071`
@@ -134,7 +140,7 @@ Servicios expuestos:
 - Worker 2 metrics: `http://127.0.0.1:9102`
 - Worker 3 metrics: `http://127.0.0.1:9103`
 
-Cada nodo worker es la misma aplicacion desplegada 3 veces con diferente `WORKER_NODE_ID` y puertos externos distintos.
+Cada nodo worker es la misma aplicacion desplegada 3 veces con diferente `WORKER_NODE_ID` y puertos externos distintos. El coordinador mantiene una cola central de solicitudes y despacha cada request al worker mas conveniente segun estado, capacidad y disponibilidad.
 
 ## Healthchecks y metricas
 
@@ -155,6 +161,26 @@ python -m pytest
 ```
 
 ## Variables de entorno utiles
+
+Coordinador:
+
+- `COORDINATOR_NODE_ID`
+- `COORDINATOR_BIND_HOST`
+- `COORDINATOR_BIND_PORT`
+- `COORDINATOR_WORKERS`
+- `COORDINATOR_DISPATCH_CONCURRENCY`
+- `COORDINATOR_DISPATCH_WAIT_SECONDS`
+- `COORDINATOR_STATUS_POLL_SECONDS`
+- `COORDINATOR_RPC_TIMEOUT_SECONDS`
+- `COORDINATOR_LOG_LEVEL`
+- `COORDINATOR_GRPC_SERVER_CERT_FILE`
+- `COORDINATOR_GRPC_SERVER_KEY_FILE`
+- `COORDINATOR_GRPC_SERVER_CLIENT_CA_FILE`
+- `COORDINATOR_GRPC_SERVER_REQUIRE_CLIENT_AUTH`
+- `COORDINATOR_WORKER_CA_FILE`
+- `COORDINATOR_WORKER_CLIENT_CERT_FILE`
+- `COORDINATOR_WORKER_CLIENT_KEY_FILE`
+- `COORDINATOR_WORKER_SERVER_NAME_OVERRIDE`
 
 - `WORKER_NODE_ID`
 - `WORKER_BIND_HOST`
@@ -198,6 +224,7 @@ python -m pytest
 ## Hardening agregado
 
 - Reconexion gRPC con backoff exponencial y `keepalive`.
+- Coordinador funcional con cola central y despacho a workers reales via `ImageNodeService`.
 - Health server listo para Docker y orquestadores.
 - Manejo de `SIGINT` y `SIGTERM` para cierre ordenado.
 - Persistencia ligera de resultados terminales para deduplicacion tras reinicios sobre storage local o compartido.
@@ -209,7 +236,6 @@ python -m pytest
 
 ## Limitaciones actuales
 
-- La cola sigue siendo local a cada nodo; no se implemento una cola distribuida con propiedad compartida.
-- El coordinador incluido en este repositorio es un mock para pruebas locales, no un backend de negocio completo.
+- El coordinador implementado cubre cola central, balanceo global basico y callbacks, pero no persiste su cola global ni replicas de estado entre multiples instancias del propio coordinador.
 - OCR e inferencia requieren un backend ejecutable provisto por el operador.
-- El balanceo global entre workers sigue perteneciendo al coordinador; el worker expone estado y capacidad, pero no toma decisiones globales por si solo.
+- La propiedad de la ejecucion sigue siendo por worker; no existe ownership compartido de una misma tarea entre multiples workers.

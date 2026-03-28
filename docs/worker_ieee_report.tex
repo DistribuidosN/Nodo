@@ -37,7 +37,7 @@ Bucaramanga, Colombia
 \maketitle
 
 \begin{abstract}
-Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador mock para pruebas locales, cola de prioridad, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca exclusivamente en la capa worker y en el plano de comunicación con el servidor central. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperación ante fallos.
+Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador funcional para despacho global, cola central de solicitudes, cola de prioridad por nodo, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca principalmente en la capa worker y en su integración con el plano de coordinación. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperación ante fallos.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -62,10 +62,10 @@ El alcance del prototipo cubre:
 \item persistencia durable de pendientes, resultados y spool de eventos.
 \end{itemize}
 
-Quedaron fuera de alcance: frontend, autenticación, base de datos completa, backend de negocio y coordinador productivo. Para pruebas locales se implementó un coordinador mock.
+Quedaron fuera de alcance: frontend, autenticación, base de datos completa, backend de negocio completo y alta disponibilidad del coordinador. Para validación local y pruebas de integración se implementó un coordinador funcional de una sola instancia.
 
 \section{Arquitectura general del prototipo}
-La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: un coordinador mock centralizado, tres workers con la misma imagen de despliegue y un backend de almacenamiento configurable.
+La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: un coordinador funcional centralizado, tres workers con la misma imagen de despliegue y un backend de almacenamiento configurable.
 
 \begin{figure*}[t]
 \centering
@@ -80,7 +80,7 @@ La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: 
   callback/.style={-{Latex[length=2.5mm]}, ultra thick, green!50!black},
   sharedarrow/.style={-{Latex[length=2.3mm]}, thick, gray!70}
 ]
-\node[service] (coord) at (0,4.6) {Coordinador mock\\endpoint gRPC};
+\node[service] (coord) at (0,4.6) {Coordinador funcional\\endpoint gRPC};
 \node[worker] (w1) at (-5.2,2.45) {Worker 1\\\texttt{127.0.0.1:50051}};
 \node[worker] (w2) at (0,2.45) {Worker 2\\\texttt{127.0.0.1:50061}};
 \node[worker] (w3) at (5.2,2.45) {Worker 3\\\texttt{127.0.0.1:50071}};
@@ -294,7 +294,7 @@ Las transformaciones integradas del worker son:
 \item \texttt{sharpen};
 \item brillo/contraste;
 \item watermark de texto;
-\item conversión de formato JPG, PNG y TIF.
+\item conversión de formato JPG, PNG, TIF, WEBP, BMP, GIF estático e ICO.
 \end{itemize}
 
 Adicionalmente, el worker integra dos extensiones por adaptador:
@@ -312,7 +312,7 @@ El prototipo expone:
 \item tracing distribuido opcional con OpenTelemetry y exportación OTLP;
 \item mTLS opcional en el servidor gRPC del worker y en el canal hacia el coordinador;
 \item despliegue local con \texttt{docker compose};
-\item tres instancias worker y un coordinador mock.
+\item tres instancias worker y un coordinador funcional.
 \end{itemize}
 
 El estado de readiness considera cola, memoria disponible y conectividad hacia el coordinador. Las métricas más relevantes incluyen longitud de cola, tiempos de espera, latencia de procesamiento, retry count, utilization de recursos, tareas activas, cancelaciones y conectividad gRPC.
@@ -327,19 +327,28 @@ El repositorio fue validado con pruebas unitarias e integración sobre los compo
 \item comunicación worker--coordinador.
 \end{itemize}
 
-La ejecución final de la suite arrojó quince pruebas aprobadas. Esto confirma que el worker es ejecutable, capaz de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
+La ejecución final de la suite arrojó veintiuna pruebas aprobadas. Esto confirma que el worker y el coordinador funcional son ejecutables, capaces de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
 
-\section{Limitaciones y trabajo futuro}
-\noindent\textbf{Limitaciones principales.}
+\section{Delimitación del prototipo y evolución}
+\noindent\textbf{Capacidades ya implementadas.}
 \begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
-\item la cola sigue siendo local a cada nodo; no se implementó una cola distribuida con propiedad compartida;
-\item el coordinador usado en la validación es un mock y no un backend de negocio completo;
-\item OCR e inferencia requieren un backend ejecutable provisto por el operador;
-\item el balanceo global entre workers sigue perteneciendo al coordinador y no al worker individual.
+\item tres nodos worker funcionales con el mismo runtime y despliegue contenedorizado;
+\item cola de prioridad, scheduler local, control de admisión, backpressure y retries;
+\item persistencia durable de pendientes, resultados y spool de eventos;
+\item procesamiento paralelo de imágenes con cancelación, métricas, healthchecks y callbacks gRPC;
+\item soporte para almacenamiento local o compartido y extensiones desacopladas para OCR e inferencia.
 \end{itemize}
 
-\noindent\textbf{Trabajo futuro.}
-La siguiente etapa consiste en integrar un coordinador productivo, una cola global con ownership distribuido y mecanismos de balanceo entre workers basados en capacidad agregada del cluster.
+\noindent\textbf{Delimitaciones de arquitectura.}
+\begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
+\item la propiedad de la cola es local por nodo por diseño; una cola distribuida multi-owner pertenece al plano de coordinación o a un middleware compartido;
+\item el coordinador incluido en el repositorio ya resuelve cola central, despacho global y callbacks, pero opera como una sola instancia y todavía no replica su estado ni persiste la cola global;
+\item OCR e inferencia ya están contemplados mediante adaptadores configurables; los modelos o binarios concretos quedan como decisión operativa del despliegue;
+\item el balanceo global entre workers corresponde al coordinador, mientras que el worker expone estado, capacidad, heartbeats, métricas y drenado para soportar esa decisión global.
+\end{itemize}
+
+\noindent\textbf{Evolución natural del sistema.}
+La siguiente etapa no consiste en rehacer el worker, sino en endurecer el coordinador funcional ya implementado: persistencia de la cola global, replicación de estado, despliegue multi-instancia y políticas más sofisticadas de asignación sobre la capacidad agregada del clúster.
 
 \section{Conclusiones}
 Se implementó exitosamente un subsistema de workers distribuidos para procesamiento de imágenes con Python, \texttt{asyncio} y gRPC. El resultado no es un diagrama teórico sino un prototipo ejecutable con tres nodos, durabilidad local o compartida, control de admisión, cancelación, retries, observabilidad y despliegue en contenedores. La arquitectura lograda separa de forma clara coordinación, scheduling, ejecución y reporte, lo que la vuelve apta como base para una evolución posterior hacia un sistema distribuido productivo.

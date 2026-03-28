@@ -13,6 +13,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
+COPY coordinator ./coordinator
 COPY proto ./proto
 COPY worker ./worker
 COPY examples ./examples
