@@ -14,7 +14,7 @@ from worker.core.filter_parser import infer_output_format, parse_filters
 from worker.models.types import ExecutionResultRecord, InputImageRef, Task, TaskState
 
 
-class BusinessRequestError(ValueError):
+class BusinessRequestError(Exception):
     def __init__(self, message: str, *, code: str = "business_request_error") -> None:
         super().__init__(message)
         self.code = code

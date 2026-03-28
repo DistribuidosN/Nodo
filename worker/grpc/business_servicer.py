@@ -16,6 +16,7 @@ from worker.telemetry.tracing import (
 
 _STREAM_STOP = object()
 _SPAN_PREFIX = "worker.business."
+_FILE_NAME_ATTR = "worker.business.file_name"
 
 
 class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
@@ -29,7 +30,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
         with start_span(
             f"{_SPAN_PREFIX}process_to_path",
             context=span_context,
-            attributes={"worker.business.file_name": request.file_name or "<inline>"},
+            attributes={_FILE_NAME_ATTR: request.file_name or "<inline>"},
         ):
             business_request = self._build_request(request, context)
             try:
@@ -43,7 +44,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
         with start_span(
             f"{_SPAN_PREFIX}process_to_data",
             context=span_context,
-            attributes={"worker.business.file_name": request.file_name or "<inline>"},
+            attributes={_FILE_NAME_ATTR: request.file_name or "<inline>"},
         ):
             return await self._process_request_to_data_response(request, context)
 
@@ -158,7 +159,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
         with start_span(
             f"{_SPAN_PREFIX}find_path_by_name",
             context=span_context,
-            attributes={"worker.business.file_name": request.file_name},
+            attributes={_FILE_NAME_ATTR: request.file_name},
         ):
             result_path = self._service.find_path_by_name(request.file_name)
             if result_path is None:
@@ -175,7 +176,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
         with start_span(
             f"{_SPAN_PREFIX}find_image_by_name",
             context=span_context,
-            attributes={"worker.business.file_name": request.file_name},
+            attributes={_FILE_NAME_ATTR: request.file_name},
         ):
             image_data = self._service.find_image_by_name(request.file_name)
             if image_data is None:
