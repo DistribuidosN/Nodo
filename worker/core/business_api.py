@@ -4,8 +4,11 @@ import asyncio
 import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import Iterable
 from uuid import uuid4
+
+from PIL import Image, UnidentifiedImageError
 
 from worker.core.filter_parser import infer_output_format, parse_filters
 from worker.models.types import ExecutionResultRecord, InputImageRef, Task, TaskState
@@ -27,6 +30,7 @@ class ImageNodeBusinessService:
     def __init__(self, node, metrics) -> None:
         self._node = node
         self._metrics = metrics
+        self._config = node._config
 
     async def process_to_result(self, request: BusinessRequest, timeout_seconds: float = 120.0) -> ExecutionResultRecord:
         task = self._build_task(request)
@@ -49,6 +53,10 @@ class ImageNodeBusinessService:
         return self._node.read_output_bytes(result), result
 
     async def process_batch(self, requests: list[BusinessRequest]) -> list[tuple[bytes | None, ExecutionResultRecord | None, str | None]]:
+        if len(requests) > self._config.max_batch_size:
+            raise BusinessRequestError(
+                f"batch too large: received {len(requests)} items, limit is {self._config.max_batch_size}"
+            )
         tasks = [self._process_request_safe(item) for item in requests]
         return await asyncio.gather(*tasks)
 
@@ -57,6 +65,7 @@ class ImageNodeBusinessService:
         file_name = ""
         filters: list[str] = []
         for chunk in chunks:
+            self.validate_payload_size(len(payload) + len(chunk.chunk_data))
             payload.extend(chunk.chunk_data)
             if chunk.file_name:
                 file_name = chunk.file_name
@@ -118,9 +127,16 @@ class ImageNodeBusinessService:
         except Exception as exc:
             return None, None, str(exc)
 
+    def validate_payload_size(self, size_bytes: int) -> None:
+        if size_bytes > self._config.max_request_bytes:
+            raise BusinessRequestError(
+                f"payload too large: received {size_bytes} bytes, limit is {self._config.max_request_bytes}"
+            )
+
     def _build_task(self, request: BusinessRequest) -> Task:
+        width, height, detected_format = self._validate_request(request)
         transforms, explicit_output_format = parse_filters(request.filters)
-        inferred_format = infer_output_format(request.file_name)
+        inferred_format = detected_format or infer_output_format(request.file_name)
         output_format = explicit_output_format or inferred_format
         task_id = str(uuid4())
         image_id = f"image-{task_id}"
@@ -139,8 +155,8 @@ class ImageNodeBusinessService:
                 payload=request.image_data,
                 image_format=inferred_format,
                 size_bytes=len(request.image_data),
-                width=0,
-                height=0,
+                width=width,
+                height=height,
             ),
             output_format=output_format,
             metadata={
@@ -149,6 +165,40 @@ class ImageNodeBusinessService:
                 **request.metadata,
             },
         )
+
+    def _validate_request(self, request: BusinessRequest) -> tuple[int, int, str]:
+        if not request.image_data:
+            raise BusinessRequestError("request does not contain image bytes")
+        self.validate_payload_size(len(request.image_data))
+        if len(request.filters) > self._config.max_filters_per_request:
+            raise BusinessRequestError(
+                f"too many filters: received {len(request.filters)}, limit is {self._config.max_filters_per_request}"
+            )
+        try:
+            with Image.open(BytesIO(request.image_data)) as image:
+                width, height = image.size
+                detected_format = (image.format or "").lower()
+        except Image.DecompressionBombError as exc:
+            raise BusinessRequestError("image exceeds Pillow decompression safety limits") from exc
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            raise BusinessRequestError("invalid or unsupported image payload") from exc
+
+        if width <= 0 or height <= 0:
+            raise BusinessRequestError("image dimensions must be positive")
+        if width > self._config.max_image_width:
+            raise BusinessRequestError(
+                f"image width {width} exceeds limit {self._config.max_image_width}"
+            )
+        if height > self._config.max_image_height:
+            raise BusinessRequestError(
+                f"image height {height} exceeds limit {self._config.max_image_height}"
+            )
+        pixels = width * height
+        if pixels > self._config.max_image_pixels:
+            raise BusinessRequestError(
+                f"image pixel count {pixels} exceeds limit {self._config.max_image_pixels}"
+            )
+        return width, height, detected_format
 
 
 def _request_fingerprint(request: BusinessRequest) -> str:

@@ -440,17 +440,18 @@ class WorkerNode:
 
     def _update_health_from_state(self, state: NodeState) -> None:
         live = True
+        coordinator_ok = (not self._reporter.enabled) or self._reporter.connected
         ready = (
             state.mode == NodeMode.ACTIVE
             and state.accepting_tasks
             and state.queue_length < self._config.queue_high_watermark
             and state.available_memory_bytes > self._config.min_free_memory_bytes
-            and self._reporter.connected
+            and coordinator_ok
         )
         if ready:
             health_state = HealthState.READY
             message = "worker ready"
-        elif live and self._reporter.connected:
+        elif live and coordinator_ok:
             health_state = HealthState.DEGRADED
             message = "worker live but not ready for new load"
         else:

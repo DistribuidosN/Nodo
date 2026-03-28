@@ -115,14 +115,18 @@ def main() -> None:
 
     profiles = [
         (
-            "coordinator-server",
-            {"dns_names": ["coordinator.service", "coordinator-lb", "coordinator1", "coordinator2", "localhost"], "ip_addresses": ["127.0.0.1"], "server_auth": True},
+            "app-server-server",
+            {
+                "dns_names": ["app-server.service", "host.docker.internal", "localhost"],
+                "ip_addresses": ["127.0.0.1"],
+                "server_auth": True,
+            },
         ),
         (
             "worker-server",
             {"dns_names": ["worker.service", "worker1", "worker2", "worker3", "localhost"], "ip_addresses": ["127.0.0.1"], "server_auth": True},
         ),
-        ("coordinator-client", {"client_auth": True}),
+        ("app-server-client", {"client_auth": True}),
         ("worker-client", {"client_auth": True}),
         ("demo-client", {"client_auth": True}),
     ]

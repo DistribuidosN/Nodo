@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from io import BytesIO
+from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
@@ -49,13 +50,20 @@ async def submit_one(stub, payload: bytes, width: int, height: int, priority: in
             ],
         )
     )
-    response = await stub.SubmitTask(request)
+    try:
+        response = await stub.SubmitTask(request)
+    except grpc.RpcError:
+        return False
     return response.accepted
 
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", default="127.0.0.1:50051")
+    parser.add_argument("--ca")
+    parser.add_argument("--cert")
+    parser.add_argument("--key")
+    parser.add_argument("--server-name")
     parser.add_argument("--count", type=int, default=50)
     parser.add_argument("--concurrency", type=int, default=10)
     parser.add_argument("--width", type=int, default=640)
@@ -63,21 +71,36 @@ async def main() -> None:
     args = parser.parse_args()
 
     payload = build_payload(args.width, args.height)
-    channel = grpc.aio.insecure_channel(args.target)
+    if args.ca:
+        credentials = grpc.ssl_channel_credentials(
+            root_certificates=Path(args.ca).read_bytes(),
+            private_key=Path(args.key).read_bytes() if args.key else None,
+            certificate_chain=Path(args.cert).read_bytes() if args.cert else None,
+        )
+        options = [("grpc.ssl_target_name_override", args.server_name)] if args.server_name else None
+        channel = grpc.aio.secure_channel(args.target, credentials, options=options)
+    else:
+        channel = grpc.aio.insecure_channel(args.target)
     stub = worker_node_pb2_grpc.WorkerControlServiceStub(channel)
     semaphore = asyncio.Semaphore(args.concurrency)
     accepted = 0
+    failed = 0
 
     async def runner(index: int) -> None:
-        nonlocal accepted
+        nonlocal accepted, failed
         async with semaphore:
             if await submit_one(stub, payload, args.width, args.height, priority=10 - (index % 10)):
                 accepted += 1
+            else:
+                failed += 1
 
     started = perf_counter()
     await asyncio.gather(*(runner(index) for index in range(args.count)))
     elapsed = perf_counter() - started
-    print(f"submitted={args.count} accepted={accepted} elapsed_s={elapsed:.3f} rps={args.count / max(elapsed, 0.001):.2f}")
+    print(
+        f"target={args.target} submitted={args.count} accepted={accepted} failed={failed} "
+        f"elapsed_s={elapsed:.3f} rps={args.count / max(elapsed, 0.001):.2f}"
+    )
     await channel.close()
 
 

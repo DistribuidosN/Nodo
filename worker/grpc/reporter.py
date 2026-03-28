@@ -46,8 +46,14 @@ class CoordinatorReporter:
         self._connected = False
         self._channel_lock = asyncio.Lock()
         self._spool = EventSpoolStore(storage, state_root_uri)
+        self._enabled = bool(config.coordinator_target)
 
     async def start(self) -> None:
+        if not self._enabled:
+            self._logger.info("worker reporter disabled; no coordinator target configured")
+            self._metrics.set_coordinator_connected(False)
+            self._metrics.set_report_queue_length(0)
+            return
         await self._connect()
         for item in self._spool.load_pending():
             await self._queue.put((item.spool_id, item.kind, item.payload))
@@ -58,6 +64,8 @@ class CoordinatorReporter:
         ]
 
     async def stop(self) -> None:
+        if not self._enabled:
+            return
         self._stop_event.set()
         try:
             await asyncio.wait_for(self._queue.join(), timeout=2.0)
@@ -73,6 +81,8 @@ class CoordinatorReporter:
         self._metrics.set_coordinator_connected(False)
 
     async def report_progress(self, event: ProgressEventRecord) -> None:
+        if not self._enabled:
+            return
         inject_current_context(event.metadata)
         event.metadata["spool_kind"] = "progress"
         spool_id = self._spool.append("progress", event)
@@ -81,6 +91,8 @@ class CoordinatorReporter:
         self._metrics.set_report_queue_length(self._queue.qsize())
 
     async def report_result(self, result: ExecutionResultRecord) -> None:
+        if not self._enabled:
+            return
         inject_current_context(result.metadata)
         result.metadata["spool_kind"] = "result"
         spool_id = self._spool.append("result", result)
@@ -91,6 +103,10 @@ class CoordinatorReporter:
     @property
     def connected(self) -> bool:
         return self._connected
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
 
     async def _report_loop(self) -> None:
         while not self._stop_event.is_set() or not self._queue.empty():

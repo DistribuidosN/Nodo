@@ -1,5 +1,5 @@
 target=127.0.0.1:50052
-health_alive=True health_ready=True node_id=coordinator-1
+health_alive=True health_ready=True node_id=coordinator-2
 single_success=True result_path=s3://distributed-output/worker-2/d1fc471a-b51d-4a24-9dda-6082af53da8b.png bytes=2791
 batch_all_success=True batch_count=2
 saved_input=demo-input.png

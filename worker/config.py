@@ -28,7 +28,7 @@ class WorkerConfig:
     node_id: str
     bind_host: str
     bind_port: int
-    coordinator_target: str
+    coordinator_target: str | None
     metrics_host: str
     metrics_port: int
     health_host: str
@@ -60,6 +60,12 @@ class WorkerConfig:
     process_cancel_grace_seconds: float
     process_kill_timeout_seconds: float
     log_level: str
+    max_request_bytes: int = 25 * 1024 * 1024
+    max_batch_size: int = 16
+    max_filters_per_request: int = 12
+    max_image_width: int = 12_000
+    max_image_height: int = 12_000
+    max_image_pixels: int = 40_000_000
     require_shared_storage: bool = False
     output_uri_prefix: str | None = None
     state_uri_prefix: str | None = None
@@ -94,7 +100,7 @@ class WorkerConfig:
             node_id=os.getenv("WORKER_NODE_ID", socket.gethostname()),
             bind_host=os.getenv("WORKER_BIND_HOST", "127.0.0.1"),
             bind_port=_get_int("WORKER_BIND_PORT", 50051),
-            coordinator_target=os.getenv("WORKER_COORDINATOR_TARGET", "127.0.0.1:50052"),
+            coordinator_target=os.getenv("WORKER_COORDINATOR_TARGET") or None,
             metrics_host=os.getenv("WORKER_METRICS_HOST", "127.0.0.1"),
             metrics_port=_get_int("WORKER_METRICS_PORT", 9100),
             health_host=os.getenv("WORKER_HEALTH_HOST", "127.0.0.1"),
@@ -126,6 +132,12 @@ class WorkerConfig:
             process_cancel_grace_seconds=_get_float("WORKER_PROCESS_CANCEL_GRACE_SECONDS", 0.75),
             process_kill_timeout_seconds=_get_float("WORKER_PROCESS_KILL_TIMEOUT_SECONDS", 2.0),
             log_level=os.getenv("WORKER_LOG_LEVEL", "INFO"),
+            max_request_bytes=_get_int("WORKER_MAX_REQUEST_BYTES", 25 * 1024 * 1024),
+            max_batch_size=_get_int("WORKER_MAX_BATCH_SIZE", 16),
+            max_filters_per_request=_get_int("WORKER_MAX_FILTERS_PER_REQUEST", 12),
+            max_image_width=_get_int("WORKER_MAX_IMAGE_WIDTH", 12_000),
+            max_image_height=_get_int("WORKER_MAX_IMAGE_HEIGHT", 12_000),
+            max_image_pixels=_get_int("WORKER_MAX_IMAGE_PIXELS", 40_000_000),
             require_shared_storage=_get_bool("WORKER_REQUIRE_SHARED_STORAGE", False),
             output_uri_prefix=os.getenv("WORKER_OUTPUT_URI_PREFIX"),
             state_uri_prefix=os.getenv("WORKER_STATE_URI_PREFIX"),

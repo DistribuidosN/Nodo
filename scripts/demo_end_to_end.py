@@ -40,7 +40,7 @@ def _detect_extension(payload: bytes, fallback: str = ".png") -> str:
 
 async def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--target", default="127.0.0.1:50052")
+    parser.add_argument("--target", default="127.0.0.1:50051")
     parser.add_argument("--output-dir", default="docs/demo")
     parser.add_argument("--ca")
     parser.add_argument("--cert")

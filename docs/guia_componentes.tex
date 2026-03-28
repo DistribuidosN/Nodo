@@ -9,13 +9,12 @@
 \usepackage{array}
 \usepackage{enumitem}
 \usepackage{hyperref}
-\usepackage{xcolor}
 \usepackage{fancyhdr}
 \geometry{margin=2.2cm}
 \hypersetup{hidelinks}
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[L]{Guía Técnica del Sistema}
+\fancyhead[L]{Guía Técnica del Subsistema Worker}
 \fancyhead[R]{Procesamiento Distribuido de Imágenes}
 \fancyfoot[C]{\thepage}
 \setlength{\headheight}{14pt}
@@ -23,7 +22,7 @@
 \setlist[enumerate]{leftmargin=*, itemsep=0.3em, topsep=0.35em}
 \renewcommand{\arraystretch}{1.2}
 
-\title{\textbf{Guía Técnica del Sistema}\\Documentación Parte por Parte}
+\title{\textbf{Guía Técnica del Subsistema Worker}\\Documentación Parte por Parte}
 \author{Uso interno del proyecto}
 \date{\today}
 
@@ -33,7 +32,7 @@
 \newpage
 
 \section{Objetivo de esta guía}
-Esta guía explica el sistema completo por partes, con un enfoque práctico. Para cada componente se documenta:
+Esta guía explica el subsistema de workers por partes, con un enfoque práctico. Para cada componente se documenta:
 \begin{itemize}
 \item qué hace;
 \item en qué archivo vive;
@@ -42,265 +41,94 @@ Esta guía explica el sistema completo por partes, con un enfoque práctico. Par
 \item cómo se conecta con los demás.
 \end{itemize}
 
-La intención es que esta guía sirva para estudiar el proyecto, exponerlo o retomarlo después sin tener que reconstruir todo el contexto mental a partir del código.
+La intención es que esta guía sirva para estudiar el proyecto, exponerlo o retomarlo después sin reconstruir el contexto desde cero.
 
 \section{Vista general del sistema}
-El sistema completo está compuesto por los siguientes bloques:
+La arquitectura final es:
+
+\begin{center}
+\textbf{Cliente/Web/App $\rightarrow$ Servidor principal Java $\rightarrow$ Workers Python}
+\end{center}
+
+El servidor principal Java se encarga de:
 \begin{itemize}
-\item \textbf{Cliente gRPC}: envía solicitudes de negocio al sistema.
-\item \textbf{HAProxy}: publica un único endpoint para el clúster coordinador.
-\item \textbf{Dos coordinadores}: uno activo y uno pasivo, con failover real.
-\item \textbf{Redis}: decide qué coordinador es el líder.
-\item \textbf{Tres workers}: ejecutan el procesamiento de imágenes.
-\item \textbf{MinIO}: almacena estado compartido, resultados y pendientes.
-\item \textbf{Backends concretos}: OCR con Tesseract e inferencia con un modelo ligero.
+\item autenticación;
+\item base de datos;
+\item lógica de negocio;
+\item coordinación global del sistema.
+\end{itemize}
+
+Este repositorio se concentra en el plano de ejecución:
+\begin{itemize}
+\item tres workers;
+\item interfaces gRPC para negocio y control;
+\item almacenamiento compartido opcional;
+\item métricas, healthchecks y seguridad.
 \end{itemize}
 
 \subsection{Resumen del flujo extremo a extremo}
 \begin{enumerate}
-\item El cliente se conecta a \texttt{127.0.0.1:50052}.
-\item HAProxy redirige la conexión al coordinador que esté marcado como \texttt{ready}.
-\item El coordinador crea o reutiliza una solicitud lógica global.
-\item El coordinador selecciona el worker más conveniente.
-\item El worker acepta la tarea, la encola localmente y la ejecuta.
-\item El worker reporta progreso, heartbeat y resultado al coordinador.
-\item El coordinador consolida el estado y responde al cliente.
+\item El servidor principal Java decide que debe procesarse una imagen.
+\item El servidor principal se conecta a uno de los workers por gRPC.
+\item El worker valida la solicitud y la transforma en una tarea interna.
+\item La tarea entra a la cola local con prioridad.
+\item El scheduler la despacha cuando hay recursos suficientes.
+\item El pipeline procesa la imagen.
+\item El worker devuelve el resultado por la RPC o, si se configuró un endpoint externo, envía callbacks de progreso, resultado y heartbeat.
 \end{enumerate}
 
 \section{Mapa rápido de archivos}
-\begin{longtable}{>{\raggedright\arraybackslash}p{3.2cm} >{\raggedright\arraybackslash}p{4.1cm} >{\raggedright\arraybackslash}p{6.8cm}}
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{4.2cm} >{\raggedright\arraybackslash}p{6.5cm}}
 \toprule
 \textbf{Parte} & \textbf{Archivo principal} & \textbf{Responsabilidad} \\
 \midrule
-Coordinador & \texttt{coordinator/runtime.py} & Cola global, deduplicación, ownership, despacho y callbacks \\
-Liderazgo & \texttt{coordinator/leadership.py} & Elección del líder con Redis \\
-Salud del coordinador & \texttt{coordinator/health.py} & \texttt{/livez} y \texttt{/readyz} del coordinador \\
-Persistencia coordinador & \texttt{coordinator/state\_store.py} & Estado durable de la cola y de resultados \\
 Worker & \texttt{worker/core/node.py} & Orquestación interna del nodo \\
-API de negocio del worker & \texttt{worker/core/business\_api.py} & Traducción entre contrato de negocio y tareas internas \\
+API de negocio & \texttt{business\_api.py} & Traducción entre contrato de negocio y tareas internas \\
 Scheduler & \texttt{worker/scheduler/*.py} & Prioridad, score y costo estimado \\
 Ejecución & \texttt{worker/execution/*.py} & Procesamiento real, recursos y cancelación \\
 gRPC del worker & \texttt{worker/grpc/*.py} & Servidores, reporter y mapeos protobuf \\
-Persistencia worker & \texttt{worker/core/state\_store.py} & Pendientes, resultados y spool durable \\
-Storage abstracto & \texttt{worker/core/storage.py} & Local, \texttt{file://}, \texttt{http(s)} y \texttt{s3://} \\
+Persistencia worker & \texttt{state\_store.py} & Pendientes, resultados y spool durable \\
+Storage abstracto & \texttt{storage.py} & Local, \texttt{file://}, \texttt{http(s)} y \texttt{s3://} \\
 Telemetría & \texttt{worker/telemetry/*.py} & Logs, métricas, tracing y salud \\
-OCR & \texttt{scripts/ocr\_backend.py} & OCR real con Tesseract \\
-Inferencia & \texttt{scripts/inference\_backend.py} & Inferencia real con modelo centroidal \\
-Seguridad & \texttt{scripts/generate\_dev\_security\_assets.py} & Generación de certificados y secretos de desarrollo \\
-Despliegue & \texttt{docker-compose.yml} & Redis, MinIO, coordinadores, HAProxy y workers \\
-Balanceador & \texttt{deploy/haproxy.cfg} & Endpoint único y enrutamiento al líder \\
+OCR & \texttt{ocr\_backend.py} & OCR real con Tesseract \\
+Inferencia & \texttt{inference\_backend.py} & Inferencia real con modelo centroidal \\
+Seguridad & \texttt{security\_assets.py} & Generación de certificados y secretos \\
+Despliegue & \texttt{docker-compose.yml} & MinIO, tres workers, Prometheus y Grafana \\
 \bottomrule
 \end{longtable}
 
-\section{Capa de entrada y despliegue}
-
-\subsection{HAProxy}
-\textbf{Archivo principal}: \texttt{deploy/haproxy.cfg}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item Publica el endpoint único del coordinador en \texttt{127.0.0.1:50052}.
-\item Revisa \texttt{/readyz} de cada coordinador.
-\item Solo enruta tráfico gRPC al coordinador que sea líder.
-\end{itemize}
-
-\textbf{Qué recibe}
-\begin{itemize}
-\item conexiones gRPC de clientes externos;
-\item healthchecks HTTP internos sobre el puerto de salud del coordinador.
-\end{itemize}
-
-\textbf{Qué entrega}
-\begin{itemize}
-\item una ruta de entrada estable al clúster coordinador;
-\item failover transparente si cambia el líder.
-\end{itemize}
-
-\textbf{Cómo se conecta}
-\begin{itemize}
-\item escucha delante de \texttt{coordinator1} y \texttt{coordinator2};
-\item usa \texttt{/readyz} para determinar cuál coordinador está activo.
-\end{itemize}
+\section{Despliegue}
 
 \subsection{Docker Compose}
 \textbf{Archivo principal}: \texttt{docker-compose.yml}
 
 \textbf{Qué hace}
 \begin{itemize}
-\item define el stack completo del sistema;
-\item levanta Redis, MinIO, dos coordinadores, HAProxy y tres workers;
-\item inyecta certificados, secretos y variables de entorno.
+\item levanta MinIO como storage compartido;
+\item levanta \texttt{worker1}, \texttt{worker2} y \texttt{worker3};
+\item levanta Prometheus y Grafana;
+\item inyecta certificados y secretos.
 \end{itemize}
 
 \textbf{Qué recibe}
 \begin{itemize}
 \item imágenes Docker;
 \item secretos montados desde \texttt{.secrets/};
-\item configuración del proyecto.
+\item configuración desde variables de entorno.
 \end{itemize}
 
 \textbf{Qué entrega}
 \begin{itemize}
-\item un entorno reproducible;
+\item un clúster local reproducible de workers;
 \item puertos públicos para gRPC, salud, métricas y consola MinIO.
 \end{itemize}
 
 \textbf{Cómo se conecta}
 \begin{itemize}
-\item Redis se usa para liderazgo;
 \item MinIO se usa para storage compartido;
-\item workers y coordinadores se comunican por mTLS.
-\end{itemize}
-
-\section{Coordinador}
-
-\subsection{Visión general}
-El coordinador es el plano de control global. No procesa imágenes; decide a qué worker mandar cada solicitud y mantiene la visión agregada del clúster.
-
-\subsection{Configuración}
-\textbf{Archivo principal}: \texttt{coordinator/config.py}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item carga variables de entorno del coordinador;
-\item define puertos, Redis, storage, workers conocidos, TLS y timeouts.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item variables \texttt{COORDINATOR\_*}.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item un objeto de configuración tipado para el runtime.
-\end{itemize}
-
-\subsection{Arranque}
-\textbf{Archivo principal}: \texttt{coordinator/main.py}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item crea el runtime;
-\item registra el servicio gRPC de negocio;
-\item registra el servicio de callbacks del coordinador;
-\item arranca el servidor HTTP de salud.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item configuración ya cargada;
-\item credenciales TLS;
-\item lista de workers.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item proceso coordinador en ejecución.
-\end{itemize}
-
-\subsection{Runtime principal}
-\textbf{Archivo principal}: \texttt{coordinator/runtime.py}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item recibe solicitudes de negocio;
-\item calcula una clave global por request;
-\item deduplica si el trabajo ya existe o si el resultado ya fue generado;
-\item mantiene la cola global;
-\item asigna ownership temporal por solicitud;
-\item selecciona el worker más conveniente;
-\item recibe progreso, resultados y heartbeat de los workers;
-\item guarda resultados y estado durable.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item \texttt{ProcessRequest} del cliente;
-\item callbacks \texttt{ReportProgress}, \texttt{ReportResult}, \texttt{Heartbeat};
-\item estados de workers obtenidos por polling;
-\item liderazgo desde Redis.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item respuesta al cliente;
-\item despacho al worker por gRPC;
-\item persistencia del estado global.
-\end{itemize}
-
-\textbf{Cómo se conecta}
-\begin{itemize}
-\item usa \texttt{ImageNodeService} para hablar con clientes;
-\item usa \texttt{WorkerControlService} para hablar con workers;
-\item usa \texttt{CoordinatorCallbackService} para recibir reportes;
-\item usa Redis para liderazgo;
-\item usa MinIO para persistencia compartida.
-\end{itemize}
-
-\subsection{Elección de líder}
-\textbf{Archivo principal}: \texttt{coordinator/leadership.py}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item adquiere un lock distribuido en Redis;
-\item renueva el lock mientras la instancia siga viva;
-\item libera el liderazgo al cerrar;
-\item permite que otra instancia asuma el rol si la líder cae.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item URL de Redis;
-\item \texttt{cluster\_id};
-\item \texttt{instance\_id};
-\item TTL del lock.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item bandera \texttt{is\_leader};
-\item identificador del holder actual del lock.
-\end{itemize}
-
-\subsection{Salud del coordinador}
-\textbf{Archivo principal}: \texttt{coordinator/health.py}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item expone \texttt{/livez};
-\item expone \texttt{/readyz}.
-\end{itemize}
-
-\textbf{Regla importante}
-\begin{itemize}
-\item \texttt{/livez}: proceso vivo;
-\item \texttt{/readyz}: coordinador vivo \textbf{y} líder.
-\end{itemize}
-
-Esa diferencia es la que permite que Docker considere sanos a ambos coordinadores, mientras HAProxy solo envía tráfico al líder.
-
-\subsection{Persistencia del coordinador}
-\textbf{Archivo principal}: \texttt{coordinator/state\_store.py}
-
-\textbf{Qué hace}
-\begin{itemize}
-\item guarda solicitudes pendientes;
-\item guarda resultados ya procesados;
-\item restaura el estado al reiniciar.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item jobs serializados;
-\item records procesados;
-\item storage compartido.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item cola global durable;
-\item cache durable de resultados.
+\item los workers exponen gRPC por mTLS;
+\item Prometheus scrapea las métricas de cada worker;
+\item Grafana consume Prometheus.
 \end{itemize}
 
 \section{Worker}
@@ -314,7 +142,18 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \textbf{Qué hace}
 \begin{itemize}
 \item carga puertos, límites, storage, TLS, tracing, OCR e inferencia;
-\item decide si el worker exige storage compartido.
+\item define si el worker reporta callbacks a un servidor principal externo;
+\item define límites duros de entrada.
+\end{itemize}
+
+\textbf{Entradas principales}
+\begin{itemize}
+\item \texttt{WORKER\_BIND\_*};
+\item \texttt{WORKER\_COORDINATOR\_TARGET};
+\item \texttt{WORKER\_MAX\_REQUEST\_BYTES};
+\item \texttt{WORKER\_MAX\_BATCH\_SIZE};
+\item \texttt{WORKER\_MAX\_IMAGE\_*};
+\item \texttt{WORKER\_STORAGE\_*}.
 \end{itemize}
 
 \subsection{Orquestador interno}
@@ -343,8 +182,8 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \textbf{Salidas}
 \begin{itemize}
 \item decisiones de aceptación o rechazo;
-\item progreso y resultados hacia el coordinador;
-\item persistencia de estado local o compartido.
+\item persistencia de estado local o compartido;
+\item callbacks al servidor principal si existe endpoint configurado.
 \end{itemize}
 
 \subsection{API de negocio del worker}
@@ -354,20 +193,8 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \begin{itemize}
 \item traduce solicitudes del contrato \texttt{ImageNodeService} a tareas internas;
 \item construye \texttt{Task} a partir de filtros y payload;
+\item valida tamaño, batch, cantidad de filtros, dimensiones y número de píxeles;
 \item espera el resultado y lo devuelve como bytes o como path.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item \texttt{ProcessRequest};
-\item \texttt{filters};
-\item bytes de imagen.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item \texttt{ExecutionResultRecord};
-\item bytes o path final para la respuesta gRPC.
 \end{itemize}
 
 \subsection{Parser de filtros}
@@ -441,22 +268,7 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \item decide si una tarea puede correr ahora.
 \end{itemize}
 
-\textbf{Entradas}
-\begin{itemize}
-\item tarea;
-\item longitud de cola;
-\item número de tareas activas;
-\item métricas del host.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item \texttt{ResourceRequirements};
-\item \texttt{ResourceSnapshot};
-\item decisión de admisión.
-\end{itemize}
-
-\subsection{Execution manager}
+\subsection{Execution Manager}
 \textbf{Archivo principal}: \texttt{worker/execution/execution\_manager.py}
 
 \textbf{Qué hace}
@@ -465,22 +277,7 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \item limita concurrencia con semáforos;
 \item decide entre thread y proceso dedicado;
 \item maneja cancelación;
-\item observa tareas activas;
 \item limpia salidas parciales.
-\end{itemize}
-
-\textbf{Entradas}
-\begin{itemize}
-\item \texttt{Task};
-\item requerimientos estimados;
-\item tokens de cancelación;
-\item configuración de OCR e inferencia.
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item \texttt{ExecutionResultRecord};
-\item estados de cancelación o error.
 \end{itemize}
 
 \subsection{Procesador de imágenes}
@@ -535,9 +332,6 @@ Las operaciones costosas integradas fueron implementadas de manera cooperativa, 
 \item soporta local, \texttt{file://}, \texttt{http(s)} y \texttt{s3://}.
 \end{itemize}
 
-\textbf{Por qué existe}
-Evita que el resto del sistema tenga que saber si el resultado quedó en disco local o en MinIO.
-
 \subsection{Persistencia del worker}
 \textbf{Archivo principal}: \texttt{worker/core/state\_store.py}
 
@@ -552,7 +346,7 @@ Evita que el resto del sistema tenga que saber si el resultado quedó en disco l
 \begin{itemize}
 \item \texttt{StateStore}: cache durable de completados;
 \item \texttt{PendingTaskStore}: tareas en cola o retry;
-\item \texttt{EventSpoolStore}: cola durable de eventos hacia el coordinador.
+\item \texttt{EventSpoolStore}: cola durable de eventos hacia el servidor principal.
 \end{itemize}
 
 \section{gRPC}
@@ -562,7 +356,7 @@ Evita que el resto del sistema tenga que saber si el resultado quedó en disco l
 
 \textbf{Qué hace}
 \begin{itemize}
-\item define la interfaz que usa el cliente para pedir procesamiento;
+\item define la interfaz de negocio para pedir procesamiento;
 \item expone modos unary, streaming y batch.
 \end{itemize}
 
@@ -577,13 +371,13 @@ Evita que el resto del sistema tenga que saber si el resultado quedó en disco l
 \item \texttt{GetMetrics}
 \end{itemize}
 
-\subsection{Contrato interno distribuido}
+\subsection{Contrato interno de control}
 \textbf{Archivo principal}: \texttt{proto/worker\_node.proto}
 
 \textbf{Qué hace}
 \begin{itemize}
-\item define el control entre coordinador y workers;
-\item define callbacks del worker al coordinador.
+\item define el control fino del worker;
+\item define el endpoint opcional de callbacks.
 \end{itemize}
 
 \textbf{Servicios}
@@ -591,6 +385,9 @@ Evita que el resto del sistema tenga que saber si el resultado quedó en disco l
 \item \texttt{WorkerControlService}
 \item \texttt{CoordinatorCallbackService}
 \end{itemize}
+
+\textbf{Nota}
+El nombre \texttt{CoordinatorCallbackService} se conserva por compatibilidad de proto, pero en la arquitectura final representa el endpoint de callbacks del servidor principal Java.
 
 \subsection{Servidor de control del worker}
 \textbf{Archivo principal}: \texttt{worker/grpc/servicer.py}
@@ -611,7 +408,7 @@ Evita que el resto del sistema tenga que saber si el resultado quedó en disco l
 \begin{itemize}
 \item expone \texttt{ImageNodeService};
 \item usa internamente \texttt{business\_api.py};
-\item no crea otra lógica paralela: reutiliza el mismo motor del worker.
+\item reutiliza el mismo motor del worker.
 \end{itemize}
 
 \subsection{Reporter}
@@ -619,15 +416,15 @@ Evita que el resto del sistema tenga que saber si el resultado quedó en disco l
 
 \textbf{Qué hace}
 \begin{itemize}
-\item mantiene el canal hacia el coordinador;
+\item mantiene el canal de callbacks si existe un endpoint externo configurado;
 \item envía \texttt{ProgressEvent};
 \item envía \texttt{ExecutionResult};
 \item envía \texttt{Heartbeat};
-\item reintenta con backoff si el coordinador no responde.
+\item reintenta con backoff si el endpoint no responde.
 \end{itemize}
 
 \textbf{Punto importante}
-Si el coordinador no está disponible, los eventos no se pierden: se quedan en el spool durable y se reenvían después.
+Si no se configuró \texttt{WORKER\_COORDINATOR\_TARGET}, el reporter queda desactivado y el worker sigue operando.
 
 \subsection{Seguridad gRPC}
 \textbf{Archivo principal}: \texttt{worker/grpc/security.py}
@@ -695,19 +492,6 @@ Si el coordinador no está disponible, los eventos no se pierden: se quedan en e
 \item devuelve texto reconocido en JSON.
 \end{itemize}
 
-\textbf{Entradas}
-\begin{itemize}
-\item \texttt{WORKER\_INPUT\_FILE}
-\item \texttt{WORKER\_OUTPUT\_JSON}
-\item parámetros opcionales como idioma y \texttt{psm}
-\end{itemize}
-
-\textbf{Salidas}
-\begin{itemize}
-\item texto OCR;
-\item metadata del motor usado.
-\end{itemize}
-
 \subsection{Inferencia}
 \textbf{Archivo principal}: \texttt{scripts/inference\_backend.py}
 
@@ -732,19 +516,11 @@ Si el coordinador no está disponible, los eventos no se pierden: se quedan en e
 \textbf{Qué hace}
 \begin{itemize}
 \item crea una CA de desarrollo;
-\item genera certificados para coordinador, workers y cliente demo;
+\item genera certificados para workers, servidor principal de ejemplo y cliente demo;
 \item genera secretos de acceso para MinIO.
 \end{itemize}
 
-\textbf{Salidas}
-\begin{itemize}
-\item \texttt{.secrets/pki/*.crt}
-\item \texttt{.secrets/pki/*.key}
-\item \texttt{.secrets/minio\_access\_key.txt}
-\item \texttt{.secrets/minio\_secret\_key.txt}
-\end{itemize}
-
-\section{Scripts y herramientas de operación}
+\section{Scripts y herramientas}
 
 \subsection{run.ps1}
 \textbf{Archivo principal}: \texttt{run.ps1}
@@ -759,21 +535,13 @@ Si el coordinador no está disponible, los eventos no se pierden: se quedan en e
 \item corre tests.
 \end{itemize}
 
-\textbf{Comandos más importantes}
-\begin{itemize}
-\item \texttt{.\textbackslash run.ps1 stack}
-\item \texttt{.\textbackslash run.ps1 demo}
-\item \texttt{.\textbackslash run.ps1 down}
-\item \texttt{.\textbackslash run.ps1 test}
-\end{itemize}
-
 \subsection{Demo extremo a extremo}
 \textbf{Archivo principal}: \texttt{scripts/demo\_end\_to\_end.py}
 
 \textbf{Qué hace}
 \begin{itemize}
 \item construye una imagen de prueba;
-\item llama al sistema por TLS;
+\item llama a un worker por TLS;
 \item valida \texttt{HealthCheck};
 \item hace una solicitud simple y una por batch;
 \item guarda artefactos en \texttt{docs/demo/}.
@@ -783,38 +551,30 @@ Si el coordinador no está disponible, los eventos no se pierden: se quedan en e
 
 \subsection{Camino normal}
 \begin{enumerate}
-\item El cliente invoca \texttt{ImageNodeService}.
-\item El coordinador recibe la request en \texttt{coordinator/runtime.py}.
-\item Se calcula un \texttt{request\_key}.
-\item Si la tarea ya existe o el resultado ya está, se reutiliza.
-\item Si es nueva, entra a la cola global.
-\item El coordinador elige un worker.
-\item El worker recibe la \texttt{Task} por \texttt{SubmitTask}.
-\item El worker la encola localmente.
-\item El scheduler local la saca cuando hay recursos.
+\item El servidor principal Java invoca \texttt{ImageNodeService} o \texttt{WorkerControlService}.
+\item El worker recibe la request.
+\item La request se valida y se convierte en una \texttt{Task}.
+\item La tarea entra a la cola local.
+\item El scheduler la saca cuando hay recursos.
 \item El execution manager corre el pipeline.
-\item El worker persiste resultado y lo reporta.
-\item El coordinador actualiza su estado y responde.
+\item El resultado se persiste.
+\item El worker responde por la RPC o envía callbacks si el endpoint externo está configurado.
 \end{enumerate}
 
-\subsection{Camino de failover}
+\subsection{Camino con callbacks}
 \begin{enumerate}
-\item El coordinador líder cae.
-\item Redis deja expirar o libera el lock.
-\item El follower adquiere el liderazgo.
-\item Su \texttt{/readyz} pasa a \texttt{200}.
-\item HAProxy empieza a enviarle tráfico.
-\item Los clientes siguen usando el mismo endpoint público.
+\item El servidor principal expone un endpoint compatible con \texttt{CoordinatorCallbackService}.
+\item El worker envía \texttt{Heartbeat}, \texttt{ReportProgress} y \texttt{ReportResult}.
+\item Si el endpoint no responde, los eventos quedan en spool durable.
+\item Cuando el canal vuelve, los eventos se reenvían.
 \end{enumerate}
 
 \section{Qué parte decide qué}
-\begin{longtable}{>{\raggedright\arraybackslash}p{3.6cm} >{\raggedright\arraybackslash}p{9.8cm}}
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.8cm} >{\raggedright\arraybackslash}p{9.6cm}}
 \toprule
 \textbf{Componente} & \textbf{Decisión principal} \\
 \midrule
-HAProxy & A qué coordinador enviar tráfico de entrada \\
-Redis + leadership & Qué coordinador es el líder \\
-CoordinatorRuntime & Qué solicitud existe, a qué worker despacharla y qué resultado devolver \\
+Servidor principal Java & Qué tarea de negocio debe ejecutarse y en qué worker enviarla \\
 WorkerNode & Si acepta, encola, reintenta, cancela o drena una tarea \\
 TaskScorer & Qué prioridad efectiva tiene la tarea \\
 ResourceManager & Si hay recursos suficientes para correrla \\
@@ -827,15 +587,14 @@ State stores & Qué estado debe sobrevivir a reinicios \\
 \section{Puntos clave para explicar el proyecto}
 Si necesitas resumir el sistema oralmente, estas son las ideas más importantes:
 \begin{itemize}
-\item el coordinador decide y el worker ejecuta;
-\item Redis elige al líder del coordinador;
-\item HAProxy da un único endpoint al cliente;
-\item MinIO comparte estado y resultados entre nodos;
-\item el worker tiene cola local con prioridad, backpressure y persistencia;
-\item el sistema usa mTLS y soporta OCR e inferencia reales.
+\item el servidor principal Java coordina y los workers ejecutan;
+\item este repo no maneja auth ni BD de negocio;
+\item cada worker tiene cola local con prioridad, backpressure y persistencia;
+\item el sistema usa gRPC, mTLS, MinIO, Prometheus y Grafana;
+\item el worker soporta OCR e inferencia reales mediante adaptadores.
 \end{itemize}
 
 \section{Conclusión}
-El proyecto quedó dividido de manera clara entre plano de control y plano de ejecución. El coordinador se encarga de la coordinación global, el ownership y el despacho; cada worker se encarga de priorizar, admitir, ejecutar, persistir y reportar. Redis y HAProxy permiten failover real del coordinador, mientras MinIO resuelve la durabilidad compartida. Con esta separación, el sistema es entendible, demostrable y extensible sin rehacer su arquitectura base.
+El proyecto quedó dividido de manera clara entre lógica de negocio y plano de ejecución. El servidor principal Java conserva autenticación, persistencia corporativa y coordinación global. Este repositorio aporta un subsistema de workers Python capaz de priorizar, admitir, ejecutar, persistir y reportar tareas de procesamiento de imágenes. Con esta separación, la solución es entendible, demostrable y extensible sin mezclar responsabilidades.
 
 \end{document}

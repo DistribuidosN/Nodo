@@ -20,8 +20,15 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def build_config(tmp_path, worker_port: int, coordinator_port: int, metrics_port: int, health_port: int) -> WorkerConfig:
-    return WorkerConfig(
+def build_config(
+    tmp_path,
+    worker_port: int,
+    coordinator_port: int,
+    metrics_port: int,
+    health_port: int,
+    **overrides,
+) -> WorkerConfig:
+    values = dict(
         node_id="imagenode-test",
         bind_host="127.0.0.1",
         bind_port=worker_port,
@@ -58,6 +65,8 @@ def build_config(tmp_path, worker_port: int, coordinator_port: int, metrics_port
         process_kill_timeout_seconds=1.0,
         log_level="INFO",
     )
+    values.update(overrides)
+    return WorkerConfig(**values)
 
 
 def build_payload(color=(90, 50, 210), size=(160, 120)) -> bytes:
@@ -186,6 +195,16 @@ async def test_imagenode_service_processes_unary_batch_stream_and_search(tmp_pat
     assert all(item.success for item in streamed)
     assert {item.file_name for item in streamed} == {"stream-a.png", "stream-b.png"}
 
+    too_many_filters = await stub.ProcessToData(
+        imagenode_pb2.ProcessRequest(
+            image_data=build_payload(),
+            file_name="too-many.png",
+            filters=["grayscale"] * 13,
+        )
+    )
+    assert too_many_filters.success is False
+    assert "too many filters" in too_many_filters.message.lower()
+
     health = await stub.HealthCheck(imagenode_pb2.EmptyRequest())
     assert health.is_alive is True
     assert health.node_id == "imagenode-test"
@@ -193,6 +212,72 @@ async def test_imagenode_service_processes_unary_batch_stream_and_search(tmp_pat
     metrics_response = await stub.GetMetrics(imagenode_pb2.EmptyRequest())
     assert "queue_length" in metrics_response.statistics
     assert "active_tasks" in metrics_response.statistics
+
+    await channel.close()
+    await worker_server.stop(grace=3)
+    await node.close()
+    await coordinator_server.stop(grace=3)
+
+
+@pytest.mark.asyncio
+async def test_imagenode_service_enforces_payload_and_batch_limits(tmp_path):
+    worker_port = free_port()
+    coordinator_port = free_port()
+    metrics_port = free_port()
+    health_port = free_port()
+
+    coordinator = MockCoordinator()
+    coordinator_server = grpc.aio.server()
+    worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
+    coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
+    await coordinator_server.start()
+
+    config = build_config(
+        tmp_path,
+        worker_port,
+        coordinator_port,
+        metrics_port,
+        health_port,
+        max_request_bytes=256,
+        max_batch_size=2,
+    )
+    metrics = WorkerMetrics()
+    node = WorkerNode(config=config, metrics=metrics)
+    await node.start()
+
+    worker_server = grpc.aio.server()
+    imagenode_pb2_grpc.add_ImageNodeServiceServicer_to_server(
+        ImageNodeBusinessServicer(node=node, metrics=metrics, stream_concurrency=2),
+        worker_server,
+    )
+    worker_server.add_insecure_port(f"127.0.0.1:{worker_port}")
+    await worker_server.start()
+
+    channel = grpc.aio.insecure_channel(f"127.0.0.1:{worker_port}")
+    stub = imagenode_pb2_grpc.ImageNodeServiceStub(channel)
+
+    oversized = await stub.ProcessToData(
+        imagenode_pb2.ProcessRequest(
+            image_data=b"x" * 512,
+            file_name="too-large.bin",
+            filters=[],
+        )
+    )
+    assert oversized.success is False
+    assert "payload too large" in oversized.message.lower()
+
+    batch = await stub.ProcessBatch(
+        imagenode_pb2.BatchRequest(
+            requests=[
+                imagenode_pb2.ProcessRequest(image_data=build_payload(), file_name="a.png", filters=[]),
+                imagenode_pb2.ProcessRequest(image_data=build_payload(), file_name="b.png", filters=[]),
+                imagenode_pb2.ProcessRequest(image_data=build_payload(), file_name="c.png", filters=[]),
+            ]
+        )
+    )
+    assert batch.all_success is False
+    assert batch.responses
+    assert "batch too large" in batch.responses[0].message.lower()
 
     await channel.close()
     await worker_server.stop(grace=3)

@@ -1,0 +1,196 @@
+{
+  "info": {
+    "_postman_id": "3ee90bd8-3d93-47b5-8d62-6395f8c49a23",
+    "name": "Nodo Workers Local",
+    "description": "Coleccion importable en Postman para revisar endpoints HTTP del stack local de workers.\n\nGlosario rapido:\n- `livez`: se usa para saber si el proceso sigue vivo. En corto: `no esta muerto`.\n- `readyz`: se usa para saber si el servicio esta listo para recibir trabajo. En corto: `si esta listo para usarse`.\n- `metrics`: endpoint de metricas en formato Prometheus. Expone CPU, memoria, cola, tareas activas, errores y tiempos.\n- `Prometheus`: servicio que recoge periodicamente las metricas de los workers.\n- `targets`: lista de endpoints que Prometheus esta intentando scrapear. Si un target esta `UP`, lo esta leyendo bien.\n- `Grafana`: panel visual que se conecta a Prometheus para mostrar dashboards.\n\nPara probar gRPC en Postman, importa tambien los protos `proto/imagenode.proto` y `proto/worker_node.proto`, usa el environment `nodo-workers-local.postman_environment.json` y pega los payloads de `grpc_payloads.json`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Workers Health",
+      "description": "Checks HTTP de salud de los tres workers.\n\nUsa `livez` para confirmar que el proceso sigue arriba.\nUsa `readyz` para confirmar que el worker realmente esta disponible para aceptar tareas.",
+      "item": [
+        {
+          "name": "Worker 1 - livez",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker1_http}}/livez",
+            "description": "Endpoint `livez` del worker 1.\n\nSe usa para saber si el proceso sigue vivo. En corto: `no esta muerto`.\nSi esto falla, el contenedor o el proceso probablemente estan caidos."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 1 - readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker1_http}}/readyz",
+            "description": "Endpoint `readyz` del worker 1.\n\nSe usa para saber si el servicio esta listo para recibir trabajo. En corto: `si esta listo para usarse`.\nPuede estar vivo pero no listo si esta arrancando, drenando o rechazando nuevas tareas."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 2 - livez",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker2_http}}/livez",
+            "description": "Endpoint `livez` del worker 2.\n\nSe usa para saber si el proceso sigue vivo. En corto: `no esta muerto`."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 2 - readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker2_http}}/readyz",
+            "description": "Endpoint `readyz` del worker 2.\n\nSe usa para saber si el servicio esta listo para recibir trabajo. En corto: `si esta listo para usarse`."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 3 - livez",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker3_http}}/livez",
+            "description": "Endpoint `livez` del worker 3.\n\nSe usa para saber si el proceso sigue vivo. En corto: `no esta muerto`."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 3 - readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker3_http}}/readyz",
+            "description": "Endpoint `readyz` del worker 3.\n\nSe usa para saber si el servicio esta listo para recibir trabajo. En corto: `si esta listo para usarse`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Workers Metrics",
+      "description": "Endpoints `metrics` expuestos por cada worker.\n\nEstos endpoints no son para humanos principalmente: Prometheus los consulta periodicamente para recolectar metricas. Si los abres, veras texto plano con nombres y valores de metricas.",
+      "item": [
+        {
+          "name": "Worker 1 - metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker1_metrics}}",
+            "description": "Metricas Prometheus del worker 1.\n\nAqui deberias ver datos como longitud de cola, tareas activas, CPU, memoria, errores y tiempos."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 2 - metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker2_metrics}}",
+            "description": "Metricas Prometheus del worker 2."
+          },
+          "response": []
+        },
+        {
+          "name": "Worker 3 - metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{worker3_metrics}}",
+            "description": "Metricas Prometheus del worker 3."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Observability and Storage",
+      "description": "Endpoints operativos del stack local.\n\n`Prometheus` recoge y almacena metricas.\n`Grafana` las muestra en dashboards.\n`MinIO` es el storage compartido donde quedan estados y resultados.",
+      "item": [
+        {
+          "name": "Prometheus - targets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{prometheus_url}}/api/v1/targets",
+            "description": "Lista de `targets` scrapeados por Prometheus.\n\nUn target es un endpoint de metricas que Prometheus intenta leer. Si sale `UP`, Prometheus esta recolectando bien; si sale `DOWN`, hay un problema de red, puerto o servicio."
+          },
+          "response": []
+        },
+        {
+          "name": "Grafana - health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{grafana_url}}/api/health",
+            "description": "Salud de Grafana.\n\nSirve para validar que el panel visual esta arriba y puede conectarse luego a Prometheus."
+          },
+          "response": []
+        },
+        {
+          "name": "MinIO - live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{minio_api}}/minio/health/live",
+            "description": "Liveness de MinIO.\n\nComprueba que el proceso de storage compartido sigue vivo."
+          },
+          "response": []
+        },
+        {
+          "name": "MinIO - ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{minio_api}}/minio/health/ready",
+            "description": "Readiness de MinIO.\n\nComprueba que MinIO esta listo para responder lecturas y escrituras."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "worker1_http",
+      "value": "http://127.0.0.1:8081"
+    },
+    {
+      "key": "worker2_http",
+      "value": "http://127.0.0.1:8082"
+    },
+    {
+      "key": "worker3_http",
+      "value": "http://127.0.0.1:8083"
+    },
+    {
+      "key": "worker1_metrics",
+      "value": "http://127.0.0.1:9101"
+    },
+    {
+      "key": "worker2_metrics",
+      "value": "http://127.0.0.1:9102"
+    },
+    {
+      "key": "worker3_metrics",
+      "value": "http://127.0.0.1:9103"
+    },
+    {
+      "key": "prometheus_url",
+      "value": "http://127.0.0.1:9090"
+    },
+    {
+      "key": "grafana_url",
+      "value": "http://127.0.0.1:3000"
+    },
+    {
+      "key": "minio_api",
+      "value": "http://127.0.0.1:9000"
+    }
+  ]
+}

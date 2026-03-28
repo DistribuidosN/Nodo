@@ -10,7 +10,7 @@ from proto import worker_node_pb2, worker_node_pb2_grpc
 from worker.grpc.security import build_server_credentials
 
 
-class MockCoordinatorServicer(worker_node_pb2_grpc.CoordinatorCallbackServiceServicer):
+class MockAppServerCallbackServicer(worker_node_pb2_grpc.CoordinatorCallbackServiceServicer):
     def __init__(self) -> None:
         self.progress_events: list[worker_node_pb2.ProgressEvent] = []
         self.results: list[worker_node_pb2.ExecutionResult] = []
@@ -38,21 +38,21 @@ class MockCoordinatorServicer(worker_node_pb2_grpc.CoordinatorCallbackServiceSer
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     server = grpc.aio.server()
-    servicer = MockCoordinatorServicer()
+    servicer = MockAppServerCallbackServicer()
     worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(servicer, server)
-    bind_target = os.getenv("COORDINATOR_BIND_TARGET", "127.0.0.1:50052")
+    bind_target = os.getenv("APP_SERVER_CALLBACK_BIND_TARGET", "127.0.0.1:50052")
     server_credentials = build_server_credentials(
-        cert_chain_file=os.getenv("COORDINATOR_GRPC_SERVER_CERT_FILE"),
-        private_key_file=os.getenv("COORDINATOR_GRPC_SERVER_KEY_FILE"),
-        client_ca_file=os.getenv("COORDINATOR_GRPC_SERVER_CLIENT_CA_FILE"),
-        require_client_auth=os.getenv("COORDINATOR_GRPC_SERVER_REQUIRE_CLIENT_AUTH", "").lower() in {"1", "true", "yes"},
+        cert_chain_file=os.getenv("APP_SERVER_GRPC_SERVER_CERT_FILE"),
+        private_key_file=os.getenv("APP_SERVER_GRPC_SERVER_KEY_FILE"),
+        client_ca_file=os.getenv("APP_SERVER_GRPC_SERVER_CLIENT_CA_FILE"),
+        require_client_auth=os.getenv("APP_SERVER_GRPC_SERVER_REQUIRE_CLIENT_AUTH", "").lower() in {"1", "true", "yes"},
     )
     if server_credentials is None:
         server.add_insecure_port(bind_target)
     else:
         server.add_secure_port(bind_target, server_credentials)
     await server.start()
-    logging.info("Mock coordinator listening on %s", bind_target)
+    logging.info("Mock app server callback endpoint listening on %s", bind_target)
     try:
         await server.wait_for_termination()
     finally:

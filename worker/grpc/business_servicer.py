@@ -69,6 +69,10 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
             file_name = ""
             filters: list[str] = []
             async for chunk in request_iterator:
+                try:
+                    self._service.validate_payload_size(len(payload) + len(chunk.chunk_data))
+                except BusinessRequestError as exc:
+                    return imagenode_pb2.DataResponse(success=False, message=str(exc))
                 payload.extend(chunk.chunk_data)
                 if chunk.file_name:
                     file_name = chunk.file_name
@@ -193,7 +197,13 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
         ):
             base_metadata = self._metadata_from_context(context)
             business_requests = [self._build_request(item, context, base_metadata=base_metadata) for item in request.requests]
-            results = await self._service.process_batch(business_requests)
+            try:
+                results = await self._service.process_batch(business_requests)
+            except BusinessRequestError as exc:
+                return imagenode_pb2.BatchDataResponse(
+                    responses=[imagenode_pb2.DataResponse(success=False, message=str(exc))],
+                    all_success=False,
+                )
             responses: list[imagenode_pb2.DataResponse] = []
             all_success = True
             for payload, result, error in results:

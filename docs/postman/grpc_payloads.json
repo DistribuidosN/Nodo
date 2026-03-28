@@ -1,0 +1,139 @@
+{
+  "usage": {
+    "image_node_service": {
+      "target_examples": [
+        "127.0.0.1:50051",
+        "127.0.0.1:50061",
+        "127.0.0.1:50071"
+      ],
+      "proto": "proto/imagenode.proto",
+      "service": "imagenode.ImageNodeService"
+    },
+    "worker_control_service": {
+      "target_examples": [
+        "127.0.0.1:50051",
+        "127.0.0.1:50061",
+        "127.0.0.1:50071"
+      ],
+      "proto": "proto/worker_node.proto",
+      "service": "worker.WorkerControlService"
+    },
+    "how_to_use_in_postman": [
+      "En Postman crea una peticion gRPC.",
+      "Importa el proto indicado.",
+      "Usa uno de los targets de worker.",
+      "Copia uno de estos payloads en el body JSON del metodo correspondiente.",
+      "Para campos bytes, pega la imagen en base64."
+    ]
+  },
+  "imagenode.ImageNodeService": {
+    "HealthCheck": {},
+    "GetMetrics": {},
+    "ProcessToPath": {
+      "image_data": "<BASE64_IMAGE_BYTES>",
+      "file_name": "pagina.png",
+      "filters": [
+        "grayscale",
+        "contrast:1.4",
+        "sharpen:1.3"
+      ]
+    },
+    "ProcessToData": {
+      "image_data": "<BASE64_IMAGE_BYTES>",
+      "file_name": "pagina.png",
+      "filters": [
+        "grayscale",
+        "contrast:1.4",
+        "sharpen:1.3",
+        "format:png"
+      ]
+    },
+    "ProcessBatch": {
+      "requests": [
+        {
+          "image_data": "<BASE64_IMAGE_BYTES_1>",
+          "file_name": "pagina-1.png",
+          "filters": [
+            "grayscale"
+          ]
+        },
+        {
+          "image_data": "<BASE64_IMAGE_BYTES_2>",
+          "file_name": "pagina-2.png",
+          "filters": [
+            "rotate:90",
+            "format:webp"
+          ]
+        }
+      ]
+    },
+    "FindPathByName": {
+      "file_name": "pagina.png"
+    },
+    "FindImageByName": {
+      "file_name": "pagina.png"
+    },
+    "UploadLargeImage_stream_message": {
+      "chunk_data": "<BASE64_CHUNK_BYTES>",
+      "file_name": "pagina.png",
+      "filters": [
+        "grayscale",
+        "contrast:1.4"
+      ]
+    },
+    "StreamBatchProcess_stream_message": {
+      "image_data": "<BASE64_IMAGE_BYTES>",
+      "file_name": "pagina.png",
+      "filters": [
+        "grayscale"
+      ]
+    }
+  },
+  "worker.WorkerControlService": {
+    "GetNodeStatus": {},
+    "SubmitTask": {
+      "task": {
+        "task_id": "postman-task-1",
+        "idempotency_key": "postman-task-1",
+        "priority": 50,
+        "max_retries": 2,
+        "transforms": [
+          {
+            "type": "OPERATION_GRAYSCALE"
+          },
+          {
+            "type": "OPERATION_BRIGHTNESS_CONTRAST",
+            "params": {
+              "contrast": "1.4"
+            }
+          },
+          {
+            "type": "OPERATION_SHARPEN",
+            "params": {
+              "factor": "1.3"
+            }
+          }
+        ],
+        "input": {
+          "image_id": "image-1",
+          "input_uri": "s3://distributed-output/sample/pagina.png",
+          "format": "IMAGE_FORMAT_PNG"
+        },
+        "output_format": "IMAGE_FORMAT_PNG",
+        "metadata": {
+          "requested_by": "postman"
+        }
+      }
+    },
+    "CancelTask": {
+      "task_id": "postman-task-1",
+      "reason": "manual cancel from postman"
+    },
+    "DrainNode": {
+      "reject_new_tasks": true
+    },
+    "ShutdownNode": {
+      "grace_period_seconds": 5
+    }
+  }
+}

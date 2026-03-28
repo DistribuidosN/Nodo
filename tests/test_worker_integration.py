@@ -23,12 +23,18 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def build_config(tmp_path, worker_port: int, coordinator_port: int, metrics_port: int, health_port: int) -> WorkerConfig:
+def build_config(
+    tmp_path,
+    worker_port: int,
+    coordinator_port: int | None,
+    metrics_port: int,
+    health_port: int,
+) -> WorkerConfig:
     return WorkerConfig(
         node_id="integration-node",
         bind_host="127.0.0.1",
         bind_port=worker_port,
-        coordinator_target=f"127.0.0.1:{coordinator_port}",
+        coordinator_target=f"127.0.0.1:{coordinator_port}" if coordinator_port is not None else None,
         metrics_host="127.0.0.1",
         metrics_port=metrics_port,
         health_host="127.0.0.1",
@@ -237,3 +243,30 @@ async def test_worker_control_supports_webp_output_format_enum(tmp_path):
     await worker_server.stop(grace=3)
     await node.close()
     await coordinator_server.stop(grace=3)
+
+
+@pytest.mark.asyncio
+async def test_worker_can_run_without_embedded_coordinator(tmp_path):
+    worker_port = free_port()
+    metrics_port = free_port()
+    health_port = free_port()
+
+    config = build_config(tmp_path, worker_port, None, metrics_port, health_port)
+    node = WorkerNode(config=config, metrics=WorkerMetrics())
+    await node.start()
+
+    worker_server = grpc.aio.server()
+    worker_node_pb2_grpc.add_WorkerControlServiceServicer_to_server(WorkerControlServicer(node), worker_server)
+    worker_server.add_insecure_port(f"127.0.0.1:{worker_port}")
+    await worker_server.start()
+
+    status = await node.get_node_state()
+    health = node.current_health()
+
+    assert status.node_id == "integration-node"
+    assert health.live is True
+    assert health.ready is True
+    assert health.coordinator_connected is False
+
+    await worker_server.stop(grace=3)
+    await node.close()

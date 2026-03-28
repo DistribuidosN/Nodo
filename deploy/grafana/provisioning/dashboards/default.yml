@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Distributed Image Worker
+    orgId: 1
+    folder: Distributed Image Worker
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
