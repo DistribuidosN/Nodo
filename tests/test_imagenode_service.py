@@ -14,6 +14,9 @@ from worker.grpc.business_servicer import ImageNodeBusinessServicer
 from worker.telemetry.metrics import WorkerMetrics
 
 
+COORDINATOR_CALLBACK_SERVICE = worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -28,43 +31,43 @@ def build_config(
     health_port: int,
     **overrides,
 ) -> WorkerConfig:
-    values = dict(
-        node_id="imagenode-test",
-        bind_host="127.0.0.1",
-        bind_port=worker_port,
-        coordinator_target=f"127.0.0.1:{coordinator_port}",
-        metrics_host="127.0.0.1",
-        metrics_port=metrics_port,
-        health_host="127.0.0.1",
-        health_port=health_port,
-        output_dir=tmp_path / "out",
-        state_dir=tmp_path / "state",
-        max_active_tasks=2,
-        process_pool_workers=1,
-        thread_pool_workers=2,
-        cpu_target=0.85,
-        max_queue_size=16,
-        queue_high_watermark=12,
-        queue_low_watermark=8,
-        min_free_memory_bytes=64 * 1024 * 1024,
-        large_image_threshold_bytes=8 * 1024 * 1024,
-        heartbeat_interval_seconds=0.5,
-        report_queue_size=64,
-        retry_base_ms=100,
-        retry_max_ms=1000,
-        score_deadline_window_seconds=30.0,
-        score_aging_window_seconds=60.0,
-        score_cost_window_ms=1500.0,
-        scheduler_poll_seconds=0.02,
-        dedupe_ttl_seconds=60,
-        coordinator_reconnect_base_seconds=0.2,
-        coordinator_reconnect_max_seconds=1.0,
-        coordinator_failure_threshold=2,
-        graceful_shutdown_timeout_seconds=2.0,
-        process_cancel_grace_seconds=0.1,
-        process_kill_timeout_seconds=1.0,
-        log_level="INFO",
-    )
+    values = {
+        "node_id": "imagenode-test",
+        "bind_host": "127.0.0.1",
+        "bind_port": worker_port,
+        "coordinator_target": f"127.0.0.1:{coordinator_port}",
+        "metrics_host": "127.0.0.1",
+        "metrics_port": metrics_port,
+        "health_host": "127.0.0.1",
+        "health_port": health_port,
+        "output_dir": tmp_path / "out",
+        "state_dir": tmp_path / "state",
+        "max_active_tasks": 2,
+        "process_pool_workers": 1,
+        "thread_pool_workers": 2,
+        "cpu_target": 0.85,
+        "max_queue_size": 16,
+        "queue_high_watermark": 12,
+        "queue_low_watermark": 8,
+        "min_free_memory_bytes": 64 * 1024 * 1024,
+        "large_image_threshold_bytes": 8 * 1024 * 1024,
+        "heartbeat_interval_seconds": 0.5,
+        "report_queue_size": 64,
+        "retry_base_ms": 100,
+        "retry_max_ms": 1000,
+        "score_deadline_window_seconds": 30.0,
+        "score_aging_window_seconds": 60.0,
+        "score_cost_window_ms": 1500.0,
+        "scheduler_poll_seconds": 0.02,
+        "dedupe_ttl_seconds": 60,
+        "coordinator_reconnect_base_seconds": 0.2,
+        "coordinator_reconnect_max_seconds": 1.0,
+        "coordinator_failure_threshold": 2,
+        "graceful_shutdown_timeout_seconds": 2.0,
+        "process_cancel_grace_seconds": 0.1,
+        "process_kill_timeout_seconds": 1.0,
+        "log_level": "INFO",
+    }
     values.update(overrides)
     return WorkerConfig(**values)
 
@@ -96,7 +99,7 @@ async def test_imagenode_service_processes_unary_batch_stream_and_search(tmp_pat
 
     coordinator = MockCoordinator()
     coordinator_server = grpc.aio.server()
-    worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
+    COORDINATOR_CALLBACK_SERVICE(coordinator, coordinator_server)
     coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
     await coordinator_server.start()
 
@@ -228,7 +231,7 @@ async def test_imagenode_service_enforces_payload_and_batch_limits(tmp_path):
 
     coordinator = MockCoordinator()
     coordinator_server = grpc.aio.server()
-    worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
+    COORDINATOR_CALLBACK_SERVICE(coordinator, coordinator_server)
     coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
     await coordinator_server.start()
 

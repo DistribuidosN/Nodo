@@ -13,6 +13,9 @@ from PIL import Image, ImageDraw
 from proto import imagenode_pb2, imagenode_pb2_grpc
 
 
+DEMO_INPUT_FILE_NAME = "demo-input.png"
+
+
 def _build_demo_image() -> Image.Image:
     image = Image.new("RGB", (320, 220), color=(22, 83, 143))
     draw = ImageDraw.Draw(image)
@@ -53,7 +56,7 @@ async def main() -> None:
 
     input_image = _build_demo_image()
     input_payload = _encode_png(input_image)
-    input_path = output_dir / "demo-input.png"
+    input_path = output_dir / DEMO_INPUT_FILE_NAME
     input_path.write_bytes(input_payload)
 
     if args.ca:
@@ -73,7 +76,7 @@ async def main() -> None:
     response = await stub.ProcessToData(
         imagenode_pb2.ProcessRequest(
             image_data=input_payload,
-            file_name="demo-input.png",
+            file_name=DEMO_INPUT_FILE_NAME,
             filters=[
                 "grayscale",
                 "resize:200x140",
@@ -124,7 +127,7 @@ async def main() -> None:
             "message": health.message,
         },
         "request": {
-            "file_name": "demo-input.png",
+            "file_name": DEMO_INPUT_FILE_NAME,
             "filters": ["grayscale", "resize:200x140", "watermark:UPB Demo|12|12|white"],
         },
         "result": {

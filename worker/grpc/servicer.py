@@ -42,11 +42,11 @@ class WorkerControlServicer(worker_node_pb2_grpc.WorkerControlServiceServicer):
     async def DrainNode(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span("worker.rpc.drain_node", context=span_context):
-            response = await self._node.drain(reject_new_tasks=request.reject_new_tasks)
+            response = self._node.drain(reject_new_tasks=request.reject_new_tasks)
             return worker_node_pb2.DrainNodeReply(**response)
 
     async def ShutdownNode(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span("worker.rpc.shutdown_node", context=span_context):
-            response = await self._node.shutdown(request.grace_period_seconds)
+            response = self._node.shutdown(request.grace_period_seconds)
             return worker_node_pb2.ShutdownNodeReply(**response)

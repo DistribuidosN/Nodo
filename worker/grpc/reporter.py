@@ -133,7 +133,7 @@ class CoordinatorReporter:
             else:
                 await stub.ReportResult(result_to_proto(payload), wait_for_ready=True, metadata=metadata)
         self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
-        await self._mark_success()
+        self._mark_success()
 
     async def _heartbeat_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -147,7 +147,7 @@ class CoordinatorReporter:
                         wait_for_ready=True,
                     )
                 self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
-                await self._mark_success()
+                self._mark_success()
             except Exception as exc:  # pragma: no cover
                 self._logger.warning("heartbeat failed", extra={"extra_data": {"error": str(exc)}})
                 await self._mark_failure()
@@ -185,7 +185,7 @@ class CoordinatorReporter:
             await self._connect()
         return self._stub  # type: ignore[return-value]
 
-    async def _mark_success(self) -> None:
+    def _mark_success(self) -> None:
         self._failure_count = 0
         self._connected = True
         self._metrics.set_coordinator_connected(True)

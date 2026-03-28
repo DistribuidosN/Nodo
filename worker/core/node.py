@@ -58,6 +58,7 @@ class WorkerNode:
         self._stop_event = asyncio.Event()
         self._scheduler_task: asyncio.Task | None = None
         self._health_task: asyncio.Task | None = None
+        self._shutdown_task: asyncio.Task | None = None
         self._tasks: dict[str, Task] = {}
         self._results: dict[str, ExecutionResultRecord] = {}
         self._idempotency_index: dict[str, str] = {}
@@ -111,6 +112,10 @@ class WorkerNode:
 
     async def close(self) -> None:
         self._stop_event.set()
+        if self._shutdown_task is not None:
+            self._shutdown_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._shutdown_task
         if self._health_task is not None:
             self._health_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -201,12 +206,12 @@ class WorkerNode:
             return {"accepted": True, "status": PROTO_STATUS[TaskState.CANCELLED], "message": "running task cancellation requested"}
         return {"accepted": False, "status": 0, "message": "task not found"}
 
-    async def drain(self, reject_new_tasks: bool) -> dict:
+    def drain(self, reject_new_tasks: bool) -> dict:
         self._mode = NodeMode.DRAINING
         self._accepting_tasks = not reject_new_tasks
         return {"accepted": True, "message": "worker switched to draining mode"}
 
-    async def shutdown(self, grace_period_seconds: int) -> dict:
+    def shutdown(self, grace_period_seconds: int) -> dict:
         self._mode = NodeMode.SHUTTING_DOWN
         self._accepting_tasks = False
 
@@ -214,7 +219,9 @@ class WorkerNode:
             await asyncio.sleep(grace_period_seconds)
             self._stop_event.set()
 
-        asyncio.create_task(_close_later())
+        if self._shutdown_task is not None and not self._shutdown_task.done():
+            self._shutdown_task.cancel()
+        self._shutdown_task = asyncio.create_task(_close_later(), name="worker-shutdown-delay")
         return {"accepted": True, "message": "shutdown scheduled"}
 
     async def get_node_state(self) -> NodeState:

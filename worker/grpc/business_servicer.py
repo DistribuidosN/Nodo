@@ -15,6 +15,7 @@ from worker.telemetry.tracing import (
 
 
 _STREAM_STOP = object()
+_SPAN_PREFIX = "worker.business."
 
 
 class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
@@ -26,7 +27,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
     async def ProcessToPath(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span(
-            "worker.business.process_to_path",
+            f"{_SPAN_PREFIX}process_to_path",
             context=span_context,
             attributes={"worker.business.file_name": request.file_name or "<inline>"},
         ):
@@ -40,7 +41,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
     async def ProcessToData(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span(
-            "worker.business.process_to_data",
+            f"{_SPAN_PREFIX}process_to_data",
             context=span_context,
             attributes={"worker.business.file_name": request.file_name or "<inline>"},
         ):
@@ -48,7 +49,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
 
     async def HealthCheck(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
-        with start_span("worker.business.health_check", context=span_context):
+        with start_span(f"{_SPAN_PREFIX}health_check", context=span_context):
             health = self._node.current_health()
             return imagenode_pb2.HealthCheckResponse(
                 is_alive=health.live,
@@ -59,12 +60,12 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
 
     async def GetMetrics(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
-        with start_span("worker.business.get_metrics", context=span_context):
+        with start_span(f"{_SPAN_PREFIX}get_metrics", context=span_context):
             return imagenode_pb2.MetricsResponse(statistics=await self._service.get_metrics())
 
     async def UploadLargeImage(self, request_iterator, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
-        with start_span("worker.business.upload_large_image", context=span_context):
+        with start_span(f"{_SPAN_PREFIX}upload_large_image", context=span_context):
             payload = bytearray()
             file_name = ""
             filters: list[str] = []
@@ -77,7 +78,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
                 if chunk.file_name:
                     file_name = chunk.file_name
                 if chunk.filters:
-                    filters = list(chunk.filters)
+                    filters = [*chunk.filters]
             business_request = BusinessRequest(
                 image_data=bytes(payload),
                 file_name=file_name or f"upload-{uuid4().hex}.png",
@@ -100,7 +101,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
 
     async def StreamBatchProcess(self, request_iterator, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
-        with start_span("worker.business.stream_batch_process", context=span_context):
+        with start_span(f"{_SPAN_PREFIX}stream_batch_process", context=span_context):
             queue: asyncio.Queue[object] = asyncio.Queue()
             pending: set[asyncio.Task] = set()
             semaphore = asyncio.Semaphore(self._stream_concurrency)
@@ -142,20 +143,20 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
                 producer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await producer_task
-                for task in list(pending):
+                for task in pending:
                     task.cancel()
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
 
     async def GetProcessedFilePaths(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
-        with start_span("worker.business.get_processed_file_paths", context=span_context):
+        with start_span(f"{_SPAN_PREFIX}get_processed_file_paths", context=span_context):
             return imagenode_pb2.PathListResponse(paths=self._service.get_processed_file_paths())
 
     async def FindPathByName(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span(
-            "worker.business.find_path_by_name",
+            f"{_SPAN_PREFIX}find_path_by_name",
             context=span_context,
             attributes={"worker.business.file_name": request.file_name},
         ):
@@ -166,13 +167,13 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
 
     async def GetProcessedImages(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
-        with start_span("worker.business.get_processed_images", context=span_context):
+        with start_span(f"{_SPAN_PREFIX}get_processed_images", context=span_context):
             return imagenode_pb2.DataListResponse(images=self._service.get_processed_images())
 
     async def FindImageByName(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span(
-            "worker.business.find_image_by_name",
+            f"{_SPAN_PREFIX}find_image_by_name",
             context=span_context,
             attributes={"worker.business.file_name": request.file_name},
         ):
@@ -191,7 +192,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
     async def ProcessBatch(self, request, context):
         span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
         with start_span(
-            "worker.business.process_batch",
+            f"{_SPAN_PREFIX}process_batch",
             context=span_context,
             attributes={"worker.business.batch_size": len(request.requests)},
         ):
@@ -245,7 +246,7 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
         return BusinessRequest(
             image_data=request.image_data,
             file_name=request.file_name or f"request-{uuid4().hex}.png",
-            filters=list(request.filters),
+            filters=[*request.filters],
             metadata=metadata,
         )
 
