@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Iterable
+from uuid import uuid4
+
+from worker.core.filter_parser import infer_output_format, parse_filters
+from worker.models.types import ExecutionResultRecord, InputImageRef, Task, TaskState
+
+
+class BusinessRequestError(Exception):
+    pass
+
+
+@dataclass(slots=True)
+class BusinessRequest:
+    image_data: bytes
+    file_name: str
+    filters: list[str]
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+class ImageNodeBusinessService:
+    def __init__(self, node, metrics) -> None:
+        self._node = node
+        self._metrics = metrics
+
+    async def process_to_result(self, request: BusinessRequest, timeout_seconds: float = 120.0) -> ExecutionResultRecord:
+        task = self._build_task(request)
+        reply = await self._node.submit_task(task)
+        if not reply["accepted"]:
+            raise BusinessRequestError(reply["reason"] or "worker rejected request")
+        result = await self._node.wait_for_result(reply["task_id"], timeout_seconds=timeout_seconds)
+        return result
+
+    async def process_to_path(self, request: BusinessRequest) -> str:
+        result = await self.process_to_result(request)
+        if result.state is not TaskState.SUCCEEDED or not result.output_path:
+            raise BusinessRequestError(result.error_message or "processing did not produce an output path")
+        return result.output_path
+
+    async def process_to_data(self, request: BusinessRequest) -> tuple[bytes, ExecutionResultRecord]:
+        result = await self.process_to_result(request)
+        if result.state is not TaskState.SUCCEEDED:
+            raise BusinessRequestError(result.error_message or "processing failed")
+        return self._node.read_output_bytes(result), result
+
+    async def process_batch(self, requests: list[BusinessRequest]) -> list[tuple[bytes | None, ExecutionResultRecord | None, str | None]]:
+        tasks = [self._process_request_safe(item) for item in requests]
+        return await asyncio.gather(*tasks)
+
+    async def upload_large_image(self, chunks: Iterable) -> tuple[bytes, ExecutionResultRecord]:
+        payload = bytearray()
+        file_name = ""
+        filters: list[str] = []
+        for chunk in chunks:
+            payload.extend(chunk.chunk_data)
+            if chunk.file_name:
+                file_name = chunk.file_name
+            if chunk.filters:
+                filters = list(chunk.filters)
+        if not payload:
+            raise BusinessRequestError("upload stream did not contain image bytes")
+        request = BusinessRequest(image_data=bytes(payload), file_name=file_name or f"upload-{uuid4().hex}.png", filters=filters)
+        return await self.process_to_data(request)
+
+    def get_processed_file_paths(self) -> list[str]:
+        return [
+            item.output_path
+            for item in self._node.list_completed_results()
+            if item.state is TaskState.SUCCEEDED and item.output_path
+        ]
+
+    def find_path_by_name(self, file_name: str) -> str | None:
+        result = self._node.find_result_by_source_name(file_name)
+        if result is None or result.state is not TaskState.SUCCEEDED:
+            return None
+        return result.output_path
+
+    def get_processed_images(self) -> list[bytes]:
+        images: list[bytes] = []
+        for result in self._node.list_completed_results():
+            if result.state is not TaskState.SUCCEEDED:
+                continue
+            try:
+                images.append(self._node.read_output_bytes(result))
+            except FileNotFoundError:
+                continue
+        return images
+
+    def find_image_by_name(self, file_name: str) -> bytes | None:
+        result = self._node.find_result_by_source_name(file_name)
+        if result is None or result.state is not TaskState.SUCCEEDED:
+            return None
+        return self._node.read_output_bytes(result)
+
+    async def get_metrics(self) -> dict[str, float]:
+        state = await self._node.get_node_state()
+        snapshot = self._metrics.snapshot()
+        snapshot.update(
+            {
+                "available_memory_bytes": float(state.available_memory_bytes),
+                "reserved_memory_bytes": float(state.reserved_memory_bytes),
+                "queue_length_live": float(state.queue_length),
+                "active_tasks_live": float(state.active_tasks),
+                "accepting_tasks": 1.0 if state.accepting_tasks else 0.0,
+            }
+        )
+        return snapshot
+
+    async def _process_request_safe(self, request: BusinessRequest) -> tuple[bytes | None, ExecutionResultRecord | None, str | None]:
+        try:
+            data, result = await self.process_to_data(request)
+            return data, result, None
+        except Exception as exc:
+            return None, None, str(exc)
+
+    def _build_task(self, request: BusinessRequest) -> Task:
+        transforms, explicit_output_format = parse_filters(request.filters)
+        inferred_format = infer_output_format(request.file_name)
+        output_format = explicit_output_format or inferred_format
+        task_id = str(uuid4())
+        image_id = f"image-{task_id}"
+        return Task(
+            task_id=task_id,
+            idempotency_key=f"imagenode:{request.file_name}:{task_id}",
+            priority=5,
+            created_at=datetime.now(tz=UTC),
+            deadline=None,
+            max_retries=1,
+            transforms=transforms,
+            input_image=InputImageRef(
+                image_id=image_id,
+                payload=request.image_data,
+                image_format=inferred_format,
+                size_bytes=len(request.image_data),
+                width=0,
+                height=0,
+            ),
+            output_format=output_format,
+            metadata={
+                "source_file_name": request.file_name,
+                "business_api": "imagenode",
+                **request.metadata,
+            },
+        )

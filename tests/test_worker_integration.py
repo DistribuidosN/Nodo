@@ -74,14 +74,18 @@ class MockCoordinator(worker_node_pb2_grpc.CoordinatorCallbackServiceServicer):
     def __init__(self) -> None:
         self.progress: list[worker_node_pb2.ProgressEvent] = []
         self.results: list[worker_node_pb2.ExecutionResult] = []
+        self.progress_metadata: list[tuple[tuple[str, str], ...]] = []
+        self.result_metadata: list[tuple[tuple[str, str], ...]] = []
         self.result_event = asyncio.Event()
 
     async def ReportProgress(self, request, context):
         self.progress.append(request)
+        self.progress_metadata.append(tuple((item.key, item.value) for item in context.invocation_metadata()))
         return worker_node_pb2.ReportAck(accepted=True, message="ok")
 
     async def ReportResult(self, request, context):
         self.results.append(request)
+        self.result_metadata.append(tuple((item.key, item.value) for item in context.invocation_metadata()))
         self.result_event.set()
         return worker_node_pb2.ReportAck(accepted=True, message="ok")
 
@@ -143,7 +147,8 @@ async def test_worker_processes_and_reports_task(tmp_path):
         )
     )
 
-    response = await stub.SubmitTask(request)
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    response = await stub.SubmitTask(request, metadata=(("traceparent", traceparent),))
     assert response.accepted is True
 
     await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
@@ -153,6 +158,7 @@ async def test_worker_processes_and_reports_task(tmp_path):
     assert result.width == 80
     assert result.height == 60
     assert len(coordinator.progress) >= 2
+    assert any(key == "traceparent" and value == traceparent for key, value in coordinator.result_metadata[-1])
 
     status = await stub.GetNodeStatus(worker_node_pb2.GetNodeStatusRequest())
     assert status.node_id == "integration-node"

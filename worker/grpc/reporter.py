@@ -13,8 +13,10 @@ from worker.config import WorkerConfig
 from worker.core.state_store import EventSpoolStore
 from worker.core.storage import StorageClient
 from worker.grpc.mappers import node_status_to_proto, progress_to_proto, result_to_proto
+from worker.grpc.security import build_channel_credentials
 from worker.models.types import ExecutionResultRecord, NodeState, ProgressEventRecord
 from worker.telemetry.metrics import WorkerMetrics
+from worker.telemetry.tracing import grpc_metadata_from_internal, inject_current_context, maybe_span
 
 
 StatusProvider = Callable[[], Awaitable[NodeState]]
@@ -71,6 +73,7 @@ class CoordinatorReporter:
         self._metrics.set_coordinator_connected(False)
 
     async def report_progress(self, event: ProgressEventRecord) -> None:
+        inject_current_context(event.metadata)
         event.metadata["spool_kind"] = "progress"
         spool_id = self._spool.append("progress", event)
         event.metadata["spool_id"] = spool_id
@@ -78,6 +81,7 @@ class CoordinatorReporter:
         self._metrics.set_report_queue_length(self._queue.qsize())
 
     async def report_result(self, result: ExecutionResultRecord) -> None:
+        inject_current_context(result.metadata)
         result.metadata["spool_kind"] = "result"
         spool_id = self._spool.append("result", result)
         result.metadata["spool_id"] = spool_id
@@ -106,10 +110,12 @@ class CoordinatorReporter:
     async def _send_event(self, kind: str, payload: ProgressEventRecord | ExecutionResultRecord) -> None:
         stub = await self._ensure_stub()
         started = time.perf_counter()
-        if kind == "progress":
-            await stub.ReportProgress(progress_to_proto(payload), wait_for_ready=True)
-        else:
-            await stub.ReportResult(result_to_proto(payload), wait_for_ready=True)
+        metadata = grpc_metadata_from_internal(payload.metadata)
+        with maybe_span(f"worker.callback.{kind}", attributes={"worker.callback.kind": kind}):
+            if kind == "progress":
+                await stub.ReportProgress(progress_to_proto(payload), wait_for_ready=True, metadata=metadata)
+            else:
+                await stub.ReportResult(result_to_proto(payload), wait_for_ready=True, metadata=metadata)
         self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
         await self._mark_success()
 
@@ -119,10 +125,11 @@ class CoordinatorReporter:
                 status = await self._status_provider()
                 stub = await self._ensure_stub()
                 started = time.perf_counter()
-                await stub.Heartbeat(
-                    worker_node_pb2.HeartbeatRequest(status=node_status_to_proto(status)),
-                    wait_for_ready=True,
-                )
+                with maybe_span("worker.callback.heartbeat", attributes={"worker.callback.kind": "heartbeat"}):
+                    await stub.Heartbeat(
+                        worker_node_pb2.HeartbeatRequest(status=node_status_to_proto(status)),
+                        wait_for_ready=True,
+                    )
                 self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
                 await self._mark_success()
             except Exception as exc:  # pragma: no cover
@@ -134,15 +141,27 @@ class CoordinatorReporter:
         async with self._channel_lock:
             if self._channel is not None:
                 await self._channel.close()
-            self._channel = grpc.aio.insecure_channel(
-                self._config.coordinator_target,
-                options=[
-                    ("grpc.keepalive_time_ms", 10_000),
-                    ("grpc.keepalive_timeout_ms", 5_000),
-                    ("grpc.keepalive_permit_without_calls", 1),
-                    ("grpc.http2.max_pings_without_data", 0),
-                ],
+            options = [
+                ("grpc.keepalive_time_ms", 10_000),
+                ("grpc.keepalive_timeout_ms", 5_000),
+                ("grpc.keepalive_permit_without_calls", 1),
+                ("grpc.http2.max_pings_without_data", 0),
+            ]
+            if self._config.coordinator_server_name_override:
+                options.append(("grpc.ssl_target_name_override", self._config.coordinator_server_name_override))
+            channel_credentials = build_channel_credentials(
+                root_ca_file=self._config.coordinator_ca_file,
+                cert_chain_file=self._config.coordinator_client_cert_file,
+                private_key_file=self._config.coordinator_client_key_file,
             )
+            if channel_credentials is None:
+                self._channel = grpc.aio.insecure_channel(self._config.coordinator_target, options=options)
+            else:
+                self._channel = grpc.aio.secure_channel(
+                    self._config.coordinator_target,
+                    channel_credentials,
+                    options=options,
+                )
             self._stub = worker_node_pb2_grpc.CoordinatorCallbackServiceStub(self._channel)
 
     async def _ensure_stub(self) -> worker_node_pb2_grpc.CoordinatorCallbackServiceStub:

@@ -4,6 +4,8 @@ import json
 import logging
 from datetime import UTC, datetime
 
+from worker.telemetry.tracing import current_trace_ids
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -19,6 +21,7 @@ class JsonFormatter(logging.Formatter):
                 payload[field_name] = value
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
+        payload.update(current_trace_ids())
         extra = getattr(record, "extra_data", None)
         if isinstance(extra, dict):
             payload.update(extra)

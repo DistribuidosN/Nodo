@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from proto import worker_node_pb2
+from worker.telemetry.tracing import strip_internal_trace_metadata
 from worker.models.types import (
     ExecutionResultRecord,
     InputImageRef,
@@ -119,7 +120,7 @@ def progress_to_proto(event: ProgressEventRecord) -> worker_node_pb2.ProgressEve
         run_time_ms=event.run_time_ms,
         message=event.message,
         timestamp=timestamp_from_datetime(event.timestamp),
-        metadata=event.metadata,
+        metadata=strip_internal_trace_metadata(event.metadata),
     )
 
 
@@ -139,7 +140,7 @@ def result_to_proto(result: ExecutionResultRecord) -> worker_node_pb2.ExecutionR
         error_message=result.error_message or "",
         started_at=timestamp_from_datetime(result.started_at),
         finished_at=timestamp_from_datetime(result.finished_at),
-        metadata=result.metadata,
+        metadata=strip_internal_trace_metadata(result.metadata),
     )
 
 

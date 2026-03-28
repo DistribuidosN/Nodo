@@ -28,6 +28,7 @@ from worker.scheduler.priority_queue import TaskPriorityQueue
 from worker.scheduler.scoring import TaskScorer
 from worker.telemetry.health import HealthServer
 from worker.telemetry.metrics import WorkerMetrics
+from worker.telemetry.tracing import copy_internal_trace_metadata
 
 
 PROTO_STATUS = {
@@ -61,6 +62,7 @@ class WorkerNode:
         self._results: dict[str, ExecutionResultRecord] = {}
         self._idempotency_index: dict[str, str] = {}
         self._completed_at: dict[str, float] = {}
+        self._result_waiters: dict[str, list[asyncio.Future[ExecutionResultRecord]]] = {}
         self._task_lock = asyncio.Lock()
         self._storage = StorageClient.from_config(config)
         self._state_root_uri = self._build_state_root_uri()
@@ -165,6 +167,7 @@ class WorkerNode:
                 queue_wait_ms=0,
                 run_time_ms=0,
                 message="task accepted into local priority queue",
+                metadata=self._trace_metadata(task),
             )
         )
         return self._submit_reply(True, False, task.task_id, TaskState.QUEUED, position, "")
@@ -186,6 +189,7 @@ class WorkerNode:
                     queue_wait_ms=0,
                     run_time_ms=0,
                     message=reason or "task cancelled while queued",
+                    metadata=self._trace_metadata(queued_task),
                 )
             )
             return {"accepted": True, "status": PROTO_STATUS[TaskState.CANCELLED], "message": "queued task cancelled"}
@@ -241,6 +245,43 @@ class WorkerNode:
 
     def current_health(self) -> NodeHealth:
         return self._latest_health
+
+    async def wait_for_result(self, task_id: str, timeout_seconds: float | None = None) -> ExecutionResultRecord:
+        existing = self._results.get(task_id)
+        if existing is not None and existing.state in {TaskState.SUCCEEDED, TaskState.FAILED, TaskState.CANCELLED}:
+            return existing
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[ExecutionResultRecord] = loop.create_future()
+        self._result_waiters.setdefault(task_id, []).append(future)
+        try:
+            if timeout_seconds is None:
+                return await future
+            return await asyncio.wait_for(future, timeout=timeout_seconds)
+        finally:
+            waiters = self._result_waiters.get(task_id, [])
+            if future in waiters:
+                waiters.remove(future)
+            if not waiters:
+                self._result_waiters.pop(task_id, None)
+
+    def list_completed_results(self) -> list[ExecutionResultRecord]:
+        completed = [item for item in self._results.values() if item.state in {TaskState.SUCCEEDED, TaskState.FAILED, TaskState.CANCELLED}]
+        return sorted(completed, key=lambda item: item.finished_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+    def find_result_by_source_name(self, file_name: str) -> ExecutionResultRecord | None:
+        normalized = file_name.strip().lower()
+        for result in self.list_completed_results():
+            if result.metadata.get("source_file_name", "").lower() == normalized:
+                return result
+            if result.output_path and result.output_path.rsplit("/", 1)[-1].lower() == normalized:
+                return result
+        return None
+
+    def read_output_bytes(self, result: ExecutionResultRecord) -> bytes:
+        if not result.output_path:
+            raise FileNotFoundError("result does not contain an output path")
+        return self._storage.read_bytes(result.output_path)
 
     async def _scheduler_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -306,9 +347,11 @@ class WorkerNode:
                 queue_wait_ms=queue_wait_ms,
                 run_time_ms=run_time_ms,
                 message="task finished",
+                metadata=self._trace_metadata(task),
             )
         )
         await self._reporter.report_result(result)
+        self._resolve_result_waiters(task.task_id, result)
 
     async def _handle_failure(self, task: Task, error_code: str, error_message: str) -> None:
         task.last_error = error_message
@@ -328,6 +371,7 @@ class WorkerNode:
                     queue_wait_ms=0,
                     run_time_ms=0,
                     message=f"retry scheduled after {error_code}",
+                    metadata=self._trace_metadata(task),
                 )
             )
             await self._queue.enqueue(task)
@@ -349,6 +393,7 @@ class WorkerNode:
             size_bytes=0,
             error_code=error_code,
             error_message=error_message,
+            metadata=self._trace_metadata(task),
             started_at=None,
             finished_at=datetime.now(tz=UTC),
         )
@@ -367,9 +412,11 @@ class WorkerNode:
                 queue_wait_ms=0,
                 run_time_ms=0,
                 message=error_message,
+                metadata=self._trace_metadata(task),
             )
         )
         await self._reporter.report_result(result)
+        self._resolve_result_waiters(task.task_id, result)
 
     def _cleanup_completed_cache(self) -> None:
         now = time.monotonic()
@@ -440,6 +487,7 @@ class WorkerNode:
                 size_bytes=0,
                 error_code=record.error_code,
                 error_message=record.error_message,
+                metadata={},
                 started_at=None,
                 finished_at=record.finished_at,
             )
@@ -480,3 +528,13 @@ class WorkerNode:
         if self._config.state_uri_prefix:
             return self._storage.join(self._config.state_uri_prefix, self._config.node_id)
         return str(self._config.state_dir)
+
+    def _trace_metadata(self, task: Task) -> dict[str, str]:
+        metadata: dict[str, str] = {}
+        copy_internal_trace_metadata(task.metadata, metadata)
+        return metadata
+
+    def _resolve_result_waiters(self, task_id: str, result: ExecutionResultRecord) -> None:
+        for waiter in self._result_waiters.pop(task_id, []):
+            if not waiter.done():
+                waiter.set_result(result)

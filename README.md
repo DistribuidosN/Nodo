@@ -40,7 +40,34 @@ python -m pip install -e .[dev]
 
 ```bash
 python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/worker_node.proto
+python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/imagenode.proto
 ```
+
+## Compatibilidad con el modelo de negocio
+
+El worker expone dos servicios gRPC en el mismo puerto:
+
+- `WorkerControlService`: contrato interno del worker para submit, cancelacion, drain, shutdown y estado del nodo.
+- `ImageNodeService`: contrato compatible con el modelo de negocio del equipo, con `ProcessToPath`, `ProcessToData`, `UploadLargeImage`, `StreamBatchProcess`, `ProcessBatch`, `HealthCheck`, `GetMetrics` y metodos de busqueda de resultados procesados.
+
+`ImageNodeService` no crea un runtime distinto. Traduce cada `ProcessRequest` al mismo motor interno del worker: cola priorizada, scheduler local, retries, backpressure, persistencia y reporte al coordinador.
+
+Sintaxis de `filters` soportada en `ImageNodeService`:
+
+- `grayscale`
+- `resize:640x480`
+- `crop:10,20,210,180`
+- `rotate:90` o `rotate:90,false`
+- `flip:horizontal|vertical|both`
+- `blur:2.5`
+- `sharpen:1.8`
+- `brightness:1.2`
+- `contrast:0.9`
+- `brightness_contrast:1.1,0.95`
+- `watermark:Texto|16|16|white`
+- `format:jpg`
+- `ocr`
+- `inference`
 
 ## Ejecutar localmente
 
@@ -152,6 +179,17 @@ python -m pytest
 - `WORKER_OCR_COMMAND`
 - `WORKER_INFERENCE_COMMAND`
 - `WORKER_ADAPTER_TIMEOUT_SECONDS`
+- `WORKER_GRPC_SERVER_CERT_FILE`
+- `WORKER_GRPC_SERVER_KEY_FILE`
+- `WORKER_GRPC_SERVER_CLIENT_CA_FILE`
+- `WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH`
+- `WORKER_COORDINATOR_CA_FILE`
+- `WORKER_COORDINATOR_CLIENT_CERT_FILE`
+- `WORKER_COORDINATOR_CLIENT_KEY_FILE`
+- `WORKER_COORDINATOR_SERVER_NAME_OVERRIDE`
+- `WORKER_TRACING_ENABLED`
+- `WORKER_TRACING_SERVICE_NAME`
+- `WORKER_TRACING_OTLP_ENDPOINT`
 
 ## Hardening agregado
 
@@ -162,10 +200,12 @@ python -m pytest
 - Restauracion automatica de cola pendiente desde disco o `state_uri_prefix`.
 - Spool durable de progreso y resultados hasta recibir `ack` del coordinador, con replay tras reinicio.
 - Cancelacion cooperativa por defecto para las transformaciones integradas del worker. El aislamiento en proceso dedicado queda reservado para extensiones no cooperativas o cuando una tarea lo pida explicitamente con `metadata.execution_isolation=process`.
+- mTLS opcional tanto en el servidor gRPC del worker como en el canal cliente hacia el coordinador.
+- Propagacion de trazas por metadata gRPC y soporte opcional de OpenTelemetry/OTLP.
 
 ## Limitaciones actuales
 
-- `input_uri` queda reservado para una integracion futura con storage compartido.
-- OCR e inferencia estan desacoplados y marcados como extension.
-- Para el set actual de transformaciones integradas, la cancelacion normal ya no depende de matar procesos. El `terminate/kill` queda solo como mecanismo de contencion para tareas aisladas explicitamente en proceso o extensiones futuras no cooperativas.
-- La persistencia local es de un solo nodo; no reemplaza un log distribuido ni una cola compartida entre workers.
+- La cola sigue siendo local a cada nodo; no se implemento una cola distribuida con propiedad compartida.
+- El coordinador incluido en este repositorio es un mock para pruebas locales, no un backend de negocio completo.
+- OCR e inferencia requieren un backend ejecutable provisto por el operador.
+- El balanceo global entre workers sigue perteneciendo al coordinador; el worker expone estado y capacidad, pero no toma decisiones globales por si solo.

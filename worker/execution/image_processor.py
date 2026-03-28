@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from worker.core.storage import StorageClient
 from worker.models.types import OperationType, Task
+from worker.telemetry.tracing import INTERNAL_TRACE_KEYS
 
 
 FORMAT_MAP = {
@@ -32,6 +33,7 @@ INTERNAL_RESULT_METADATA_KEYS = {
     "inference_command",
     "adapter_timeout_seconds",
     "output_uri_prefix",
+    *INTERNAL_TRACE_KEYS,
 }
 
 

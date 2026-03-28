@@ -31,6 +31,7 @@ from worker.models.types import (
 )
 from worker.scheduler.cost_model import ServiceTimeEstimator
 from worker.telemetry.metrics import WorkerMetrics
+from worker.telemetry.tracing import copy_internal_trace_metadata, extract_context_from_internal_metadata, maybe_span
 
 
 def _process_entrypoint(
@@ -136,6 +137,7 @@ class ExecutionManager:
                 queue_wait_ms=queue_wait_ms,
                 run_time_ms=0,
                 message="task admitted by local scheduler",
+                metadata=self._trace_metadata(task),
             )
         )
 
@@ -155,6 +157,7 @@ class ExecutionManager:
                 queue_wait_ms=queue_wait_ms,
                 run_time_ms=0,
                 message=f"task running in {executor_kind.value}",
+                metadata=self._trace_metadata(task),
             )
         )
         asyncio.create_task(self._watch_task(running))
@@ -371,26 +374,36 @@ class ExecutionManager:
     async def _watch_task(self, running: RunningTask) -> None:
         task = running.task
         try:
-            output_path, output_format, width, height, size_bytes, metadata = await running.future
-            run_time_ms = int((time.monotonic() - running.started_at_monotonic) * 1000)
-            self._estimator.update(task, run_time_ms)
-            self._metrics.processing_time_ms.observe(run_time_ms)
-            result = ExecutionResultRecord(
-                task_id=task.task_id,
-                image_id=task.input_image.image_id,
-                node_id=task.metadata["node_id"],
-                state=TaskState.SUCCEEDED,
-                attempt=task.attempt,
-                output_path=output_path,
-                output_format=output_format,
-                width=width,
-                height=height,
-                size_bytes=size_bytes,
-                metadata=metadata,
-                started_at=running.started_at,
-                finished_at=datetime.now(tz=UTC),
-            )
-            await self._handle_result(task, result, running.queue_wait_ms, run_time_ms)
+            span_context = extract_context_from_internal_metadata(task.metadata)
+            with maybe_span(
+                "worker.task.execute",
+                context=span_context,
+                attributes={
+                    "worker.task.id": task.task_id,
+                    "worker.image.id": task.input_image.image_id,
+                    "worker.executor.kind": running.executor_kind.value,
+                },
+            ):
+                output_path, output_format, width, height, size_bytes, metadata = await running.future
+                run_time_ms = int((time.monotonic() - running.started_at_monotonic) * 1000)
+                self._estimator.update(task, run_time_ms)
+                self._metrics.processing_time_ms.observe(run_time_ms)
+                result = ExecutionResultRecord(
+                    task_id=task.task_id,
+                    image_id=task.input_image.image_id,
+                    node_id=task.metadata["node_id"],
+                    state=TaskState.SUCCEEDED,
+                    attempt=task.attempt,
+                    output_path=output_path,
+                    output_format=output_format,
+                    width=width,
+                    height=height,
+                    size_bytes=size_bytes,
+                    metadata={**metadata, **self._trace_metadata(task)},
+                    started_at=running.started_at,
+                    finished_at=datetime.now(tz=UTC),
+                )
+                await self._handle_result(task, result, running.queue_wait_ms, run_time_ms)
         except asyncio.CancelledError:
             await self._handle_result(task, self._cancelled_result(task, running), running.queue_wait_ms, 0)
         except TaskCancelledError:
@@ -431,6 +444,12 @@ class ExecutionManager:
             size_bytes=0,
             error_code="cancelled",
             error_message="task cancelled",
+            metadata=self._trace_metadata(task),
             started_at=running.started_at,
             finished_at=datetime.now(tz=UTC),
         )
+
+    def _trace_metadata(self, task: Task) -> dict[str, str]:
+        metadata: dict[str, str] = {}
+        copy_internal_trace_metadata(task.metadata, metadata)
+        return metadata

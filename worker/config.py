@@ -70,6 +70,17 @@ class WorkerConfig:
     ocr_command: str | None = None
     inference_command: str | None = None
     adapter_timeout_seconds: float = 30.0
+    grpc_server_cert_file: str | None = None
+    grpc_server_key_file: str | None = None
+    grpc_server_client_ca_file: str | None = None
+    grpc_server_require_client_auth: bool = False
+    coordinator_ca_file: str | None = None
+    coordinator_client_cert_file: str | None = None
+    coordinator_client_key_file: str | None = None
+    coordinator_server_name_override: str | None = None
+    tracing_enabled: bool = False
+    tracing_service_name: str | None = None
+    tracing_otlp_endpoint: str | None = None
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -124,6 +135,17 @@ class WorkerConfig:
             ocr_command=os.getenv("WORKER_OCR_COMMAND"),
             inference_command=os.getenv("WORKER_INFERENCE_COMMAND"),
             adapter_timeout_seconds=_get_float("WORKER_ADAPTER_TIMEOUT_SECONDS", 30.0),
+            grpc_server_cert_file=os.getenv("WORKER_GRPC_SERVER_CERT_FILE"),
+            grpc_server_key_file=os.getenv("WORKER_GRPC_SERVER_KEY_FILE"),
+            grpc_server_client_ca_file=os.getenv("WORKER_GRPC_SERVER_CLIENT_CA_FILE"),
+            grpc_server_require_client_auth=_get_bool("WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH", False),
+            coordinator_ca_file=os.getenv("WORKER_COORDINATOR_CA_FILE"),
+            coordinator_client_cert_file=os.getenv("WORKER_COORDINATOR_CLIENT_CERT_FILE"),
+            coordinator_client_key_file=os.getenv("WORKER_COORDINATOR_CLIENT_KEY_FILE"),
+            coordinator_server_name_override=os.getenv("WORKER_COORDINATOR_SERVER_NAME_OVERRIDE"),
+            tracing_enabled=_get_bool("WORKER_TRACING_ENABLED", False),
+            tracing_service_name=os.getenv("WORKER_TRACING_SERVICE_NAME"),
+            tracing_otlp_endpoint=os.getenv("WORKER_TRACING_OTLP_ENDPOINT"),
         )
 
     @property
