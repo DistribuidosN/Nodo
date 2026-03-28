@@ -167,3 +167,73 @@ async def test_worker_processes_and_reports_task(tmp_path):
     await worker_server.stop(grace=3)
     await node.close()
     await coordinator_server.stop(grace=3)
+
+
+@pytest.mark.asyncio
+async def test_worker_control_supports_webp_output_format_enum(tmp_path):
+    worker_port = free_port()
+    coordinator_port = free_port()
+    metrics_port = free_port()
+    health_port = free_port()
+    coordinator = MockCoordinator()
+
+    coordinator_server = grpc.aio.server()
+    worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
+    coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
+    await coordinator_server.start()
+
+    config = build_config(tmp_path, worker_port, coordinator_port, metrics_port, health_port)
+    node = WorkerNode(config=config, metrics=WorkerMetrics())
+    await node.start()
+
+    worker_server = grpc.aio.server()
+    worker_node_pb2_grpc.add_WorkerControlServiceServicer_to_server(WorkerControlServicer(node), worker_server)
+    worker_server.add_insecure_port(f"127.0.0.1:{worker_port}")
+    await worker_server.start()
+
+    channel = grpc.aio.insecure_channel(f"127.0.0.1:{worker_port}")
+    stub = worker_node_pb2_grpc.WorkerControlServiceStub(channel)
+
+    created_at = Timestamp()
+    created_at.FromDatetime(datetime.now(tz=UTC))
+    payload = build_payload()
+    request = worker_node_pb2.SubmitTaskRequest(
+        task=worker_node_pb2.Task(
+            task_id="webp-task",
+            idempotency_key="webp-task",
+            priority=9,
+            created_at=created_at,
+            max_retries=1,
+            output_format=worker_node_pb2.IMAGE_FORMAT_WEBP,
+            input=worker_node_pb2.InputImage(
+                image_id="webp-image",
+                content=payload,
+                format=worker_node_pb2.IMAGE_FORMAT_PNG,
+                size_bytes=len(payload),
+                width=160,
+                height=120,
+            ),
+            transforms=[
+                worker_node_pb2.Transformation(
+                    type=worker_node_pb2.OPERATION_RESIZE,
+                    params={"width": "64", "height": "48"},
+                ),
+            ],
+        )
+    )
+
+    response = await stub.SubmitTask(request)
+    assert response.accepted is True
+
+    await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
+    result = coordinator.results[-1]
+    assert result.status == worker_node_pb2.TASK_STATUS_SUCCEEDED
+    assert result.output_format == worker_node_pb2.IMAGE_FORMAT_WEBP
+    assert result.output_path.endswith(".webp")
+    assert result.width == 64
+    assert result.height == 48
+
+    await channel.close()
+    await worker_server.stop(grace=3)
+    await node.close()
+    await coordinator_server.stop(grace=3)

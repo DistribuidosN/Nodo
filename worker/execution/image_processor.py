@@ -22,6 +22,10 @@ FORMAT_MAP = {
     "png": "PNG",
     "tif": "TIFF",
     "tiff": "TIFF",
+    "webp": "WEBP",
+    "bmp": "BMP",
+    "gif": "GIF",
+    "ico": "ICO",
 }
 
 DEFAULT_TILE_SIZE = 256
@@ -108,8 +112,7 @@ def load_image_bytes(payload: bytes) -> Image.Image:
 def serialize_image(image: Image.Image, requested_format: str) -> tuple[bytes, str]:
     requested_format = requested_format.lower()
     save_format = FORMAT_MAP.get(requested_format, requested_format.upper())
-    if save_format == "JPEG" and image.mode not in ("RGB", "L"):
-        image = image.convert("RGB")
+    image = _normalize_image_for_format(image, save_format)
     buffer = BytesIO()
     image.save(buffer, format=save_format)
     return buffer.getvalue(), save_format
@@ -138,7 +141,7 @@ def persist_output_bytes(
 ) -> tuple[str, int]:
     storage_client = storage or StorageClient()
     if output_uri:
-        content_type = f"image/{'jpeg' if requested_format in {'jpg', 'jpeg'} else requested_format}"
+        content_type = _content_type_for_format(requested_format)
         storage_client.write_bytes(output_uri, output_bytes, content_type=content_type)
         return output_uri, len(output_bytes)
 
@@ -492,6 +495,35 @@ def _result_metadata(task: Task, **extras: str) -> dict[str, str]:
 
 def _output_backend(output_path: str) -> str:
     return "uri" if "://" in output_path else "filesystem"
+
+
+def _normalize_image_for_format(image: Image.Image, save_format: str) -> Image.Image:
+    if save_format == "JPEG" and image.mode not in ("RGB", "L"):
+        return image.convert("RGB")
+    if save_format == "BMP" and image.mode == "P":
+        return image.convert("RGB")
+    if save_format == "GIF":
+        if image.mode in {"P", "L"}:
+            return image
+        return image.convert("P", palette=Image.Palette.ADAPTIVE)
+    if save_format == "ICO" and image.mode not in {"RGBA", "RGB", "L"}:
+        return image.convert("RGBA")
+    return image
+
+
+def _content_type_for_format(requested_format: str) -> str:
+    normalized = requested_format.lower()
+    return {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "tif": "image/tiff",
+        "tiff": "image/tiff",
+        "webp": "image/webp",
+        "bmp": "image/bmp",
+        "gif": "image/gif",
+        "ico": "image/x-icon",
+    }.get(normalized, f"image/{normalized}")
 
 
 def _stringify(value: object) -> str:

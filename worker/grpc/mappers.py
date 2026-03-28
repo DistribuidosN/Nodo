@@ -40,6 +40,10 @@ IMAGE_FORMAT_FROM_PROTO = {
     worker_node_pb2.IMAGE_FORMAT_JPG: "jpg",
     worker_node_pb2.IMAGE_FORMAT_PNG: "png",
     worker_node_pb2.IMAGE_FORMAT_TIF: "tif",
+    worker_node_pb2.IMAGE_FORMAT_WEBP: "webp",
+    worker_node_pb2.IMAGE_FORMAT_BMP: "bmp",
+    worker_node_pb2.IMAGE_FORMAT_GIF: "gif",
+    worker_node_pb2.IMAGE_FORMAT_ICO: "ico",
 }
 
 IMAGE_FORMAT_TO_PROTO = {
@@ -48,6 +52,10 @@ IMAGE_FORMAT_TO_PROTO = {
     "png": worker_node_pb2.IMAGE_FORMAT_PNG,
     "tif": worker_node_pb2.IMAGE_FORMAT_TIF,
     "tiff": worker_node_pb2.IMAGE_FORMAT_TIF,
+    "webp": worker_node_pb2.IMAGE_FORMAT_WEBP,
+    "bmp": worker_node_pb2.IMAGE_FORMAT_BMP,
+    "gif": worker_node_pb2.IMAGE_FORMAT_GIF,
+    "ico": worker_node_pb2.IMAGE_FORMAT_ICO,
 }
 
 OPERATION_FROM_PROTO = {

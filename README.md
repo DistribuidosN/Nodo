@@ -66,6 +66,10 @@ Sintaxis de `filters` soportada en `ImageNodeService`:
 - `brightness_contrast:1.1,0.95`
 - `watermark:Texto|16|16|white`
 - `format:jpg`
+- `format:webp`
+- `format:bmp`
+- `format:gif`
+- `format:ico`
 - `ocr`
 - `inference`
 

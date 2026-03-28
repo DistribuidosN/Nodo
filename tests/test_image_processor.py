@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from io import BytesIO
+from pathlib import Path
 from datetime import UTC, datetime
 
 from PIL import Image
@@ -187,3 +188,49 @@ def test_process_image_runs_ocr_and_inference_adapters(tmp_path):
     assert metadata["ocr_ocr_engine"] == "stub"
     assert metadata["inference_labels"] == "[\"sample\"]"
     assert metadata["inference_score"] == "0.99"
+
+
+@pytest.mark.parametrize(
+    ("output_format", "expected_save_format", "expected_mode"),
+    [
+        ("webp", "WEBP", "RGBA"),
+        ("bmp", "BMP", "RGB"),
+        ("gif", "GIF", "P"),
+        ("ico", "ICO", "RGBA"),
+    ],
+)
+def test_process_image_supports_additional_output_formats(tmp_path, output_format, expected_save_format, expected_mode):
+    image = Image.new("RGBA", (96, 96), color=(120, 50, 210, 180))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    payload = buffer.getvalue()
+
+    task = Task(
+        task_id=f"format-{output_format}",
+        idempotency_key=f"format-{output_format}",
+        priority=5,
+        created_at=datetime.now(tz=UTC),
+        deadline=None,
+        max_retries=0,
+        transforms=[TransformationSpec(operation=OperationType.FORMAT_CONVERSION)],
+        input_image=InputImageRef(
+            image_id=f"img-{output_format}",
+            payload=payload,
+            image_format="png",
+            size_bytes=len(payload),
+            width=96,
+            height=96,
+        ),
+        output_format=output_format,
+    )
+
+    output_path, actual_format, width, height, size_bytes, _metadata = process_image(task, str(tmp_path))
+    assert actual_format == output_format
+    assert width == 96
+    assert height == 96
+    assert size_bytes > 0
+    assert Path(output_path).suffix == f".{output_format}"
+
+    saved = Image.open(output_path)
+    assert saved.format == expected_save_format
+    assert saved.mode == expected_mode

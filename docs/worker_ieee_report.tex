@@ -17,44 +17,52 @@
 \pgfplotsset{compat=1.18}
 \hypersetup{hidelinks}
 
-\title{Diseno e Implementacion de Nodos Worker Distribuidos para Procesamiento Paralelo de Imagenes con gRPC y \texttt{asyncio}}
+\title{Diseño e Implementación de Nodos Worker Distribuidos para Procesamiento Paralelo de Imágenes con gRPC y \texttt{asyncio}}
 
 \author{
-\IEEEauthorblockN{Autor del proyecto}
-\IEEEauthorblockA{Documento tecnico del prototipo IEEE\\
-Python, gRPC, \texttt{asyncio}, procesamiento de imagenes}
+\IEEEauthorblockN{Santos Enmanuel Manosalva Aceros}
+\IEEEauthorblockA{
+\textit{Universidad Pontificia Bolivariana}\\
+Bucaramanga, Colombia
+}
+\and
+\IEEEauthorblockN{Christian Mauricio Rodriguez Curubo}
+\IEEEauthorblockA{
+\textit{Universidad Pontificia Bolivariana}\\
+Bucaramanga, Colombia
+}
 }
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Este documento describe el diseno y la implementacion de un subsistema de nodos \emph{worker} para procesamiento distribuido de imagenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador mock para pruebas locales, cola de prioridad, scheduling interno, control de recursos, backpressure, retries, cancelacion, metricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca exclusivamente en la capa worker y en el plano de comunicacion con el servidor central. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperacion ante fallos.
+Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador mock para pruebas locales, cola de prioridad, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca exclusivamente en la capa worker y en el plano de comunicación con el servidor central. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperación ante fallos.
 \end{abstract}
 
 \begin{IEEEkeywords}
-sistemas distribuidos, gRPC, procesamiento de imagenes, Python, asyncio, scheduling, tolerancia a fallos
+sistemas distribuidos, gRPC, procesamiento de imágenes, Python, asyncio, scheduling, tolerancia a fallos
 \end{IEEEkeywords}
 
-\section{Introduccion}
-Los sistemas de procesamiento de imagenes con alta concurrencia requieren desacoplar el plano de coordinacion del plano de ejecucion. En este proyecto se implemento la porcion de \emph{worker nodes} de una arquitectura distribuida donde un servidor central asigna trabajos y los workers ejecutan pipelines de transformacion de imagenes en paralelo. El objetivo no fue construir un backend completo, sino un componente robusto y listo para integrarse con un coordinador externo.
+\section{Introducción}
+Los sistemas de procesamiento de imágenes con alta concurrencia requieren desacoplar el plano de coordinación del plano de ejecución. En este proyecto se implementó la porción de \emph{worker nodes} de una arquitectura distribuida donde un servidor central asigna trabajos y los workers ejecutan pipelines de transformación de imágenes en paralelo. El objetivo no fue construir un backend completo, sino un componente robusto y listo para integrarse con un coordinador externo.
 
-El worker resultante acepta tareas por gRPC, las prioriza internamente, evalua admision segun recursos, ejecuta transformaciones sobre imagenes y reporta estados, progreso, errores y resultados al coordinador. La implementacion incluye soporte para entradas \texttt{payload}, \texttt{input\_path} e \texttt{input\_uri}, asi como salidas locales o sobre \texttt{output\_uri}.
+El worker resultante acepta tareas por gRPC, las prioriza internamente, evalúa admisión según recursos, ejecuta transformaciones sobre imágenes y reporta estados, progreso, errores y resultados al coordinador. La implementación incluye soporte para entradas \texttt{payload}, \texttt{input\_path} e \texttt{input\_uri}, así como salidas locales o sobre \texttt{output\_uri}.
 
 \section{Objetivos y alcance}
 El alcance del prototipo cubre:
 \begin{itemize}[leftmargin=*]
 \item nodos worker distribuidos;
 \item contrato gRPC de control y callback;
-\item cola de prioridad con repriorizacion;
-\item scheduler interno y control de admision;
-\item procesamiento paralelo de imagenes;
-\item retries, cancelacion y graceful shutdown;
-\item metricas, logs y healthchecks;
+\item cola de prioridad con repriorización;
+\item scheduler interno y control de admisión;
+\item procesamiento paralelo de imágenes;
+\item retries, cancelación y graceful shutdown;
+\item métricas, logs y healthchecks;
 \item persistencia durable de pendientes, resultados y spool de eventos.
 \end{itemize}
 
-Quedaron fuera de alcance: frontend, autenticacion, base de datos completa, backend de negocio y coordinador productivo. Para pruebas locales se implemento un coordinador mock.
+Quedaron fuera de alcance: frontend, autenticación, base de datos completa, backend de negocio y coordinador productivo. Para pruebas locales se implementó un coordinador mock.
 
 \section{Arquitectura general del prototipo}
 La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: un coordinador mock centralizado, tres workers con la misma imagen de despliegue y un backend de almacenamiento configurable.
@@ -86,7 +94,7 @@ La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: 
 \node[legend, anchor=west] (lg) at (-7.05,-2.15) {
 \tikz{\draw[control] (0,0) -- (0.9,0);} Plano de control gRPC: \texttt{SubmitTask}, \texttt{GetNodeStatus}, \texttt{CancelTask}, \texttt{DrainNode}, \texttt{ShutdownNode}\\
 \tikz{\draw[callback] (0,0) -- (0.9,0);} Callback gRPC: \texttt{ReportProgress}, \texttt{ReportResult}, \texttt{Heartbeat}\\
-\tikz{\draw[sharedarrow] (0,0) -- (0.9,0);} Persistencia, resultados, metricas y healthchecks
+\tikz{\draw[sharedarrow] (0,0) -- (0.9,0);} Persistencia, resultados, métricas y healthchecks
 };
 
 \draw[control] ($(coord.south)+(-0.85,0)$) to[out=-160,in=90] ($(w1.north)+(0.35,0)$);
@@ -105,7 +113,7 @@ La Fig.~\ref{fig:architecture} resume la arquitectura ejecutable del prototipo: 
 \draw[sharedarrow] (w2.east) -- (obs.west);
 \draw[sharedarrow] (w3.south) -- ($(obs.north)+(1.05,0)$);
 \end{tikzpicture}
-\caption{Arquitectura del prototipo. Azul: RPC de control desde el coordinador hacia cada worker. Verde: callbacks del worker hacia el coordinador. Gris: acceso a storage, metricas y healthchecks.}
+\caption{Arquitectura del prototipo. Azul: RPC de control desde el coordinador hacia cada worker. Verde: callbacks del worker hacia el coordinador. Gris: acceso a storage, métricas y healthchecks.}
 \label{fig:architecture}
 \end{figure*}
 
@@ -114,14 +122,14 @@ Cada worker mantiene los siguientes subsistemas internos:
 \item \textbf{servicio gRPC de control}: recibe tareas y comandos del coordinador;
 \item \textbf{priority queue}: implementada con \texttt{heapq};
 \item \textbf{scheduler local}: combina prioridad, aging, deadline y costo estimado;
-\item \textbf{resource manager}: evalua CPU, memoria, I/O y concurrencia activa;
+\item \textbf{resource manager}: evalúa CPU, memoria, I/O y concurrencia activa;
 \item \textbf{execution manager}: despacha transformaciones sobre \texttt{ThreadPoolExecutor} y procesos dedicados cuando se requiere aislamiento;
 \item \textbf{reporter}: mantiene un canal persistente gRPC hacia el coordinador;
 \item \textbf{state store}: preserva resultados terminales, pendientes y eventos pendientes de entrega.
 \end{itemize}
 
-\section{Contrato gRPC y flujo de comunicacion}
-El contrato de comunicacion fue implementado en \texttt{proto/worker\_node.proto}. El plano de control y el plano de callback quedaron separados como se indica en la Tabla~\ref{tab:rpc}.
+\section{Contrato gRPC y flujo de comunicación}
+El contrato de comunicación fue implementado en \texttt{proto/worker\_node.proto}. El plano de control y el plano de callback quedaron separados como se indica en la Tabla~\ref{tab:rpc}.
 
 \begin{table}[h]
 \centering
@@ -129,16 +137,16 @@ El contrato de comunicacion fue implementado en \texttt{proto/worker\_node.proto
 \label{tab:rpc}
 \begin{tabular}{>{\raggedright\arraybackslash}p{2.7cm} >{\raggedright\arraybackslash}p{4.5cm}}
 \toprule
-\textbf{RPC} & \textbf{Funcion} \\
+\textbf{RPC} & \textbf{Función} \\
 \midrule
-\texttt{SubmitTask} & Envia una tarea al worker y devuelve aceptacion, duplicado y posicion de cola. \\
-\texttt{GetNodeStatus} & Consulta el estado instantaneo del nodo. \\
-\texttt{CancelTask} & Cancela una tarea en cola o en ejecucion. \\
+\texttt{SubmitTask} & Envía una tarea al worker y devuelve aceptación, duplicado y posición de cola. \\
+\texttt{GetNodeStatus} & Consulta el estado instantáneo del nodo. \\
+\texttt{CancelTask} & Cancela una tarea en cola o en ejecución. \\
 \texttt{DrainNode} & Cambia el nodo a modo draining. \\
 \texttt{ShutdownNode} & Programa apagado ordenado del worker. \\
 \texttt{ReportProgress} & Callback del worker al coordinador con estados intermedios. \\
 \texttt{ReportResult} & Callback con el resultado final o el error terminal. \\
-\texttt{Heartbeat} & Señal periodica de vida y capacidad del nodo. \\
+\texttt{Heartbeat} & Señal periódica de vida y capacidad del nodo. \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -176,16 +184,16 @@ El ciclo de vida de una tarea se muestra en la Fig.~\ref{fig:lifecycle}. El work
 \end{figure}
 
 \section{Cola de prioridad y scheduling interno}
-El worker administra una cola de prioridad local sobre \texttt{heapq}. El score implementado combina prioridad estatica, urgencia por deadline, envejecimiento, costo estimado, reintentos y tamano de imagen:
+El worker administra una cola de prioridad local sobre \texttt{heapq}. El score implementado combina prioridad estática, urgencia por deadline, envejecimiento, costo estimado, reintentos y tamaño de imagen:
 \begin{equation}
 \label{eq:score}
 \text{score} = w_p P + w_d D + w_a A - w_c C - w_r R - w_s S
 \end{equation}
-donde $P$ es la prioridad normalizada, $D$ la urgencia relativa al deadline, $A$ el aging acumulado, $C$ el costo estimado, $R$ el numero de intentos previos y $S$ el peso relativo de la imagen.
+donde $P$ es la prioridad normalizada, $D$ la urgencia relativa al deadline, $A$ el aging acumulado, $C$ el costo estimado, $R$ el número de intentos previos y $S$ el peso relativo de la imagen.
 
-La politica final es hibrida:
+La política final es híbrida:
 \begin{itemize}[leftmargin=*]
-\item la prioridad acelera trabajos criticos;
+\item la prioridad acelera trabajos críticos;
 \item el aging evita starvation;
 \item el deadline incrementa el score cuando una tarea se acerca a su vencimiento;
 \item el costo estimado favorece una variante de SJF sin sacrificar prioridad.
@@ -195,50 +203,50 @@ El estimador de costo se actualiza con promedio exponencial:
 \begin{equation}
 \tau_{n+1} = \alpha t_n + (1-\alpha)\tau_n
 \end{equation}
-donde $t_n$ es el tiempo real de servicio observado y $\tau_n$ la prediccion anterior.
+donde $t_n$ es el tiempo real de servicio observado y $\tau_n$ la predicción anterior.
 
-\section{Control de admision y recursos}
-Antes de ejecutar una tarea, el worker evalua si existe capacidad disponible en CPU, memoria, I/O y GPU opcional. La capacidad efectiva se aproxima por:
+\section{Control de admisión y recursos}
+Antes de ejecutar una tarea, el worker evalúa si existe capacidad disponible en CPU, memoria, I/O y GPU opcional. La capacidad efectiva se aproxima por:
 \begin{equation}
 \label{eq:capacity}
 C_{\text{ef}} = \min(f_{\text{cpu}}, f_{\text{ram}}, f_{\text{gpu}}, f_{\text{io}})\cdot C_{\text{base}}
 \end{equation}
 
-Una tarea solo se despacha cuando sus requerimientos estimados son compatibles con la foto actual de recursos y cuando la cola no ha superado el \emph{high water mark}. En saturacion, el worker deja de aceptar carga nueva y responde \texttt{REJECTED} o mantiene las tareas pendientes en cola.
+Una tarea solo se despacha cuando sus requerimientos estimados son compatibles con la foto actual de recursos y cuando la cola no ha superado el \emph{high water mark}. En saturación, el worker deja de aceptar carga nueva y responde \texttt{REJECTED} o mantiene las tareas pendientes en cola.
 
 \section{Modelo de concurrencia en Python}
-El diseno de concurrencia se dividio de la siguiente manera:
+El diseño de concurrencia se dividió de la siguiente manera:
 \begin{itemize}[leftmargin=*]
 \item \texttt{asyncio} para networking, control gRPC, scheduler, heartbeats y reporter;
 \item \texttt{heapq} para la cola priorizada;
 \item \texttt{ThreadPoolExecutor} para las transformaciones integradas del pipeline;
-\item procesos dedicados solo para aislamiento explicito o extensiones no cooperativas.
+\item procesos dedicados solo para aislamiento explícito o extensiones no cooperativas.
 \end{itemize}
 
-El \texttt{ExecutionManager} usa semaforos para limitar la concurrencia activa. Las transformaciones integradas de \texttt{resize}, \texttt{rotate}, \texttt{blur}, \texttt{sharpen} y \texttt{brightness/contrast} fueron implementadas de forma cooperativa, permitiendo cancelacion durante el pipeline sin depender normalmente de matar procesos.
+El \texttt{ExecutionManager} usa semáforos para limitar la concurrencia activa. Las transformaciones integradas de \texttt{resize}, \texttt{rotate}, \texttt{blur}, \texttt{sharpen} y \texttt{brightness/contrast} fueron implementadas de forma cooperativa, permitiendo cancelación durante el pipeline sin depender normalmente de matar procesos.
 
-\section{Persistencia durable, errores y recuperacion}
-La tolerancia a fallos se resolvio en tres niveles:
+\section{Persistencia durable, errores y recuperación}
+La tolerancia a fallos se resolvió en tres niveles:
 \begin{enumerate}[leftmargin=*]
-\item \textbf{deduplicacion}: resultados terminales persistidos por \texttt{idempotency\_key};
-\item \textbf{restauracion de pendientes}: tareas en cola o programadas para retry se recargan al reinicio;
+\item \textbf{deduplicación}: resultados terminales persistidos por \texttt{idempotency\_key};
+\item \textbf{restauración de pendientes}: tareas en cola o programadas para retry se recargan al reinicio;
 \item \textbf{spool durable de eventos}: progreso y resultados se almacenan hasta recibir \texttt{ack} del coordinador.
 \end{enumerate}
 
-Si el coordinador se desconecta, el worker no pierde informacion: guarda el evento y reintenta la entrega con backoff exponencial y \emph{replay} al restablecer el canal. Si una tarea falla durante la ejecucion, se registra el error y se decide entre \texttt{RETRY\_SCHEDULED} y \texttt{FAILED} segun \texttt{max\_retries}.
+Si el coordinador se desconecta, el worker no pierde información: guarda el evento y reintenta la entrega con backoff exponencial y \emph{replay} al restablecer el canal. Si una tarea falla durante la ejecución, se registra el error y se decide entre \texttt{RETRY\_SCHEDULED} y \texttt{FAILED} según \texttt{max\_retries}.
 
 El resultado final del worker incluye:
 \begin{itemize}[leftmargin=*]
 \item estado terminal;
 \item ruta o URI de salida;
 \item formato de imagen;
-\item dimensiones y tamano;
+\item dimensiones y tamaño;
 \item metadata adicional del pipeline;
-\item codigo y mensaje de error cuando aplica.
+\item código y mensaje de error cuando aplica.
 \end{itemize}
 
-\section{Backpressure y analisis de capacidad}
-El comportamiento esperado ante saturacion puede analizarse con modelos clasicos de colas. Se utilizaron como referencia:
+\section{Backpressure y análisis de capacidad}
+El comportamiento esperado ante saturación puede analizarse con modelos clásicos de colas. Se utilizaron como referencia:
 \begin{equation}
 L = \lambda W
 \end{equation}
@@ -249,7 +257,7 @@ L = \lambda W
 W_{M/M/1} = \frac{1}{\mu - \lambda}
 \end{equation}
 
-La Fig.~\ref{fig:mm1} ilustra la forma en que crece la espera analitica cuando la utilizacion $\rho$ se aproxima a 1. Aunque la curva es teorica, justifica el uso de backpressure, watermarks y control de admision.
+La Fig.~\ref{fig:mm1} ilustra la forma en que crece la espera analítica cuando la utilización $\rho$ se aproxima a 1. Aunque la curva es teórica, justifica el uso de backpressure, watermarks y control de admisión.
 
 \begin{figure}[h]
 \centering
@@ -257,7 +265,7 @@ La Fig.~\ref{fig:mm1} ilustra la forma en que crece la espera analitica cuando l
 \begin{axis}[
   width=0.95\columnwidth,
   height=5cm,
-  xlabel={Utilizacion $\rho$},
+  xlabel={Utilización $\rho$},
   ylabel={Factor de espera relativo},
   ymin=0,
   ymax=12,
@@ -270,7 +278,7 @@ La Fig.~\ref{fig:mm1} ilustra la forma en que crece la espera analitica cuando l
 \addplot[thick, blue] {1/(1-x)};
 \end{axis}
 \end{tikzpicture}
-\caption{Curva analitica de crecimiento de espera relativa al aproximarse $\rho$ a 1.}
+\caption{Curva analítica de crecimiento de espera relativa al aproximarse $\rho$ a 1.}
 \label{fig:mm1}
 \end{figure}
 
@@ -286,7 +294,7 @@ Las transformaciones integradas del worker son:
 \item \texttt{sharpen};
 \item brillo/contraste;
 \item watermark de texto;
-\item conversion de formato JPG, PNG y TIF.
+\item conversión de formato JPG, PNG y TIF.
 \end{itemize}
 
 Adicionalmente, el worker integra dos extensiones por adaptador:
@@ -298,34 +306,34 @@ Adicionalmente, el worker integra dos extensiones por adaptador:
 \section{Observabilidad y despliegue}
 El prototipo expone:
 \begin{itemize}[leftmargin=*]
-\item metricas Prometheus;
+\item métricas Prometheus;
 \item \texttt{/livez} y \texttt{/readyz};
 \item logs estructurados;
-\item tracing distribuido opcional con OpenTelemetry y exportacion OTLP;
+\item tracing distribuido opcional con OpenTelemetry y exportación OTLP;
 \item mTLS opcional en el servidor gRPC del worker y en el canal hacia el coordinador;
 \item despliegue local con \texttt{docker compose};
 \item tres instancias worker y un coordinador mock.
 \end{itemize}
 
-El estado de readiness considera cola, memoria disponible y conectividad hacia el coordinador. Las metricas mas relevantes incluyen longitud de cola, tiempos de espera, latencia de procesamiento, retry count, utilization de recursos, tareas activas, cancelaciones y conectividad gRPC.
+El estado de readiness considera cola, memoria disponible y conectividad hacia el coordinador. Las métricas más relevantes incluyen longitud de cola, tiempos de espera, latencia de procesamiento, retry count, utilization de recursos, tareas activas, cancelaciones y conectividad gRPC.
 
-\section{Validacion del prototipo}
-El repositorio fue validado con pruebas unitarias e integracion sobre los componentes de:
+\section{Validación del prototipo}
+El repositorio fue validado con pruebas unitarias e integración sobre los componentes de:
 \begin{itemize}[leftmargin=*]
-\item procesamiento de imagenes;
+\item procesamiento de imágenes;
 \item persistencia de estado y spool;
-\item recuperacion de pendientes;
-\item cancelacion;
-\item comunicacion worker--coordinador.
+\item recuperación de pendientes;
+\item cancelación;
+\item comunicación worker--coordinador.
 \end{itemize}
 
-La ejecucion final de la suite arrojo catorce pruebas aprobadas. Esto confirma que el worker es ejecutable, capaz de aceptar tareas, encolarlas, despacharlas, procesar imagenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
+La ejecución final de la suite arrojó quince pruebas aprobadas. Esto confirma que el worker es ejecutable, capaz de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
 
 \section{Limitaciones y trabajo futuro}
 \noindent\textbf{Limitaciones principales.}
 \begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
-\item la cola sigue siendo local a cada nodo; no se implemento una cola distribuida con propiedad compartida;
-\item el coordinador usado en la validacion es un mock y no un backend de negocio completo;
+\item la cola sigue siendo local a cada nodo; no se implementó una cola distribuida con propiedad compartida;
+\item el coordinador usado en la validación es un mock y no un backend de negocio completo;
 \item OCR e inferencia requieren un backend ejecutable provisto por el operador;
 \item el balanceo global entre workers sigue perteneciendo al coordinador y no al worker individual.
 \end{itemize}
@@ -334,6 +342,6 @@ La ejecucion final de la suite arrojo catorce pruebas aprobadas. Esto confirma q
 La siguiente etapa consiste en integrar un coordinador productivo, una cola global con ownership distribuido y mecanismos de balanceo entre workers basados en capacidad agregada del cluster.
 
 \section{Conclusiones}
-Se implemento exitosamente un subsistema de workers distribuidos para procesamiento de imagenes con Python, \texttt{asyncio} y gRPC. El resultado no es un diagrama teorico sino un prototipo ejecutable con tres nodos, durabilidad local o compartida, control de admision, cancelacion, retries, observabilidad y despliegue en contenedores. La arquitectura lograda separa de forma clara coordinacion, scheduling, ejecucion y reporte, lo que la vuelve apta como base para una evolucion posterior hacia un sistema distribuido productivo.
+Se implementó exitosamente un subsistema de workers distribuidos para procesamiento de imágenes con Python, \texttt{asyncio} y gRPC. El resultado no es un diagrama teórico sino un prototipo ejecutable con tres nodos, durabilidad local o compartida, control de admisión, cancelación, retries, observabilidad y despliegue en contenedores. La arquitectura lograda separa de forma clara coordinación, scheduling, ejecución y reporte, lo que la vuelve apta como base para una evolución posterior hacia un sistema distribuido productivo.
 
 \end{document}

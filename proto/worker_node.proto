@@ -44,6 +44,10 @@ enum ImageFormat {
   IMAGE_FORMAT_JPG = 1;
   IMAGE_FORMAT_PNG = 2;
   IMAGE_FORMAT_TIF = 3;
+  IMAGE_FORMAT_WEBP = 4;
+  IMAGE_FORMAT_BMP = 5;
+  IMAGE_FORMAT_GIF = 6;
+  IMAGE_FORMAT_ICO = 7;
 }
 
 message Transformation {
