@@ -242,5 +242,10 @@ class ImageNodeBusinessServicer(imagenode_pb2_grpc.ImageNodeServiceServicer):
     def _metadata_from_context(self, context) -> dict[str, str]:
         metadata: dict[str, str] = {}
         copy_internal_trace_metadata_from_grpc(metadata, context.invocation_metadata())
+        for item in context.invocation_metadata():
+            key = getattr(item, "key", "")
+            value = getattr(item, "value", "")
+            if key.startswith("x-coordinator-") and value:
+                metadata[key] = value
         inject_current_context(metadata)
         return metadata

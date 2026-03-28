@@ -6,9 +6,12 @@ services:
     environment:
       COORDINATOR_BIND_HOST: 0.0.0.0
       COORDINATOR_BIND_PORT: 50052
+      COORDINATOR_STATE_DIR: /app/data/state
       COORDINATOR_WORKERS: worker-1=worker1:50051,worker-2=worker2:50051,worker-3=worker3:50051
     ports:
       - "50052:50052"
+    volumes:
+      - coordinator-data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',50052),2); s.close()"]
       interval: 10s
@@ -107,6 +110,7 @@ services:
       start_period: 15s
 
 volumes:
+  coordinator-data:
   worker1-data:
   worker2-data:
   worker3-data:

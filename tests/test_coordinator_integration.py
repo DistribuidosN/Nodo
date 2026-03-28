@@ -4,6 +4,7 @@ import asyncio
 import socket
 from io import BytesIO
 from datetime import UTC, datetime
+from pathlib import Path
 
 import grpc
 import pytest
@@ -98,6 +99,7 @@ async def test_coordinator_dispatches_to_ready_worker_and_exposes_business_api(t
             node_id="coord-test",
             bind_host="127.0.0.1",
             bind_port=coordinator_port,
+            state_dir=Path(tmp_path) / "coordinator-state",
             workers={
                 "worker-1": f"127.0.0.1:{worker1_port}",
                 "worker-2": f"127.0.0.1:{worker2_port}",
@@ -106,6 +108,7 @@ async def test_coordinator_dispatches_to_ready_worker_and_exposes_business_api(t
             dispatch_wait_seconds=0.05,
             status_poll_seconds=0.2,
             rpc_timeout_seconds=20.0,
+            ownership_lease_seconds=3.0,
             log_level="INFO",
         )
     )
@@ -161,6 +164,18 @@ async def test_coordinator_dispatches_to_ready_worker_and_exposes_business_api(t
     record = runtime.get_record("via-coordinator.png")
     assert record is not None
     assert record.node_id == "worker-2"
+    assert runtime._workers["worker-2"].dispatches == 1
+
+    cached_response = await stub.ProcessToData(
+        imagenode_pb2.ProcessRequest(
+            image_data=build_payload(),
+            file_name="via-coordinator.png",
+            filters=["grayscale", "resize:80x60"],
+        )
+    )
+    assert cached_response.success is True
+    assert cached_response.result_path == response.result_path
+    assert runtime._workers["worker-2"].dispatches == 1
 
     path_response = await stub.FindPathByName(imagenode_pb2.FileNameRequest(file_name="via-coordinator.png"))
     assert path_response.success is True

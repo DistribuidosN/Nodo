@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Iterable
@@ -123,9 +124,11 @@ class ImageNodeBusinessService:
         output_format = explicit_output_format or inferred_format
         task_id = str(uuid4())
         image_id = f"image-{task_id}"
+        coordinator_request_key = request.metadata.get("x-coordinator-request-key")
+        idempotency_key = coordinator_request_key or _request_fingerprint(request)
         return Task(
             task_id=task_id,
-            idempotency_key=f"imagenode:{request.file_name}:{task_id}",
+            idempotency_key=f"imagenode:{idempotency_key}",
             priority=5,
             created_at=datetime.now(tz=UTC),
             deadline=None,
@@ -146,3 +149,14 @@ class ImageNodeBusinessService:
                 **request.metadata,
             },
         )
+
+
+def _request_fingerprint(request: BusinessRequest) -> str:
+    digest = hashlib.sha256()
+    digest.update(request.file_name.encode("utf-8"))
+    digest.update(b"\0")
+    for item in request.filters:
+        digest.update(item.encode("utf-8"))
+        digest.update(b"\0")
+    digest.update(hashlib.sha256(request.image_data).digest())
+    return digest.hexdigest()

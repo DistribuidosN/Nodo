@@ -37,7 +37,7 @@ Bucaramanga, Colombia
 \maketitle
 
 \begin{abstract}
-Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador funcional para despacho global, cola central de solicitudes, cola de prioridad por nodo, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca principalmente en la capa worker y en su integración con el plano de coordinación. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperación ante fallos.
+Este documento describe el diseño y la implementación de un subsistema de nodos \emph{worker} para procesamiento distribuido de imágenes en paralelo. El prototipo fue desarrollado en Python con \texttt{asyncio} y \texttt{grpc.aio}, y contempla tres nodos worker, un coordinador funcional para despacho global, cola central durable, ownership global por solicitud, cola de prioridad por nodo, scheduling interno, control de recursos, backpressure, retries, cancelación, métricas, healthchecks y persistencia durable de estado y eventos. La propuesta se enfoca principalmente en la capa worker y en su integración con el plano de coordinación. El resultado es un prototipo ejecutable, contenedorizado y validado por pruebas automatizadas, orientado a despliegues reales con soporte de almacenamiento compartido, adaptadores de OCR e inferencia y recuperación ante fallos.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -327,28 +327,28 @@ El repositorio fue validado con pruebas unitarias e integración sobre los compo
 \item comunicación worker--coordinador.
 \end{itemize}
 
-La ejecución final de la suite arrojó veintiuna pruebas aprobadas. Esto confirma que el worker y el coordinador funcional son ejecutables, capaces de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
+La ejecución final de la suite arrojó veintidós pruebas aprobadas. Esto confirma que el worker y el coordinador funcional son ejecutables, capaces de aceptar tareas, encolarlas, despacharlas, procesar imágenes, reportar progreso y recuperarse ante fallos comunes del plano de control.
 
 \section{Delimitación del prototipo y evolución}
 \noindent\textbf{Capacidades ya implementadas.}
 \begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
 \item tres nodos worker funcionales con el mismo runtime y despliegue contenedorizado;
 \item cola de prioridad, scheduler local, control de admisión, backpressure y retries;
-\item persistencia durable de pendientes, resultados y spool de eventos;
+\item persistencia durable de pendientes, resultados, cola global del coordinador y spool de eventos;
 \item procesamiento paralelo de imágenes con cancelación, métricas, healthchecks y callbacks gRPC;
 \item soporte para almacenamiento local o compartido y extensiones desacopladas para OCR e inferencia.
 \end{itemize}
 
 \noindent\textbf{Delimitaciones de arquitectura.}
 \begin{itemize}[leftmargin=*, itemsep=0.25ex, topsep=0.35ex]
-\item la propiedad de la cola es local por nodo por diseño; una cola distribuida multi-owner pertenece al plano de coordinación o a un middleware compartido;
-\item el coordinador incluido en el repositorio ya resuelve cola central, despacho global y callbacks, pero opera como una sola instancia y todavía no replica su estado ni persiste la cola global;
+\item la propiedad de la cola de ejecución sigue siendo local por nodo por diseño; el coordinador aporta ownership global por solicitud, pero no un middleware de consenso multi-owner entre coordinadores;
+\item el coordinador incluido en el repositorio ya resuelve cola central durable, despacho global, deduplicación por fingerprint y callbacks, pero opera como una sola instancia y todavía no replica su estado ni realiza failover automático;
 \item OCR e inferencia ya están contemplados mediante adaptadores configurables; los modelos o binarios concretos quedan como decisión operativa del despliegue;
 \item el balanceo global entre workers corresponde al coordinador, mientras que el worker expone estado, capacidad, heartbeats, métricas y drenado para soportar esa decisión global.
 \end{itemize}
 
 \noindent\textbf{Evolución natural del sistema.}
-La siguiente etapa no consiste en rehacer el worker, sino en endurecer el coordinador funcional ya implementado: persistencia de la cola global, replicación de estado, despliegue multi-instancia y políticas más sofisticadas de asignación sobre la capacidad agregada del clúster.
+La siguiente etapa no consiste en rehacer el worker, sino en endurecer el coordinador funcional ya implementado: replicación de estado, despliegue multi-instancia, failover automático y políticas más sofisticadas de asignación sobre la capacidad agregada del clúster.
 
 \section{Conclusiones}
 Se implementó exitosamente un subsistema de workers distribuidos para procesamiento de imágenes con Python, \texttt{asyncio} y gRPC. El resultado no es un diagrama teórico sino un prototipo ejecutable con tres nodos, durabilidad local o compartida, control de admisión, cancelación, retries, observabilidad y despliegue en contenedores. La arquitectura lograda separa de forma clara coordinación, scheduling, ejecución y reporte, lo que la vuelve apta como base para una evolución posterior hacia un sistema distribuido productivo.

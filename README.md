@@ -1,6 +1,6 @@
 # Distributed Image Worker
 
-Worker gRPC en Python para procesamiento distribuido de imagenes. El repositorio incluye los nodos worker y un coordinador funcional en Python para despacho global, balanceo basico entre workers, recepcion de callbacks, cola central de solicitudes y exposicion del contrato de negocio.
+Worker gRPC en Python para procesamiento distribuido de imagenes. El repositorio incluye los nodos worker y un coordinador funcional en Python para despacho global, cola central durable, ownership global por solicitud, recepcion de callbacks y exposicion del contrato de negocio.
 
 ## Decisiones principales
 
@@ -11,6 +11,7 @@ Worker gRPC en Python para procesamiento distribuido de imagenes. El repositorio
 - Canal persistente gRPC hacia un coordinador funcional para `ReportProgress`, `ReportResult` y `Heartbeat`.
 - `input_uri` y `output_uri/output_uri_prefix` soportados sobre filesystem local, `file://`, `http(s)` de solo lectura y `s3://`/MinIO.
 - Persistencia ligera de resultados, cola pendiente y spool durable sobre filesystem local o un backend compartido configurable por URI.
+- Coordinador con persistencia durable de cola global, leases de ownership por solicitud y deduplicacion/caching global por fingerprint de request.
 - OCR e inferencia integrados como adaptadores ejecutables configurables por comando, sin cambiar el contrato gRPC del worker.
 - Healthchecks HTTP en `/livez` y `/readyz` separados del plano gRPC.
 
@@ -140,7 +141,7 @@ Servicios expuestos:
 - Worker 2 metrics: `http://127.0.0.1:9102`
 - Worker 3 metrics: `http://127.0.0.1:9103`
 
-Cada nodo worker es la misma aplicacion desplegada 3 veces con diferente `WORKER_NODE_ID` y puertos externos distintos. El coordinador mantiene una cola central de solicitudes y despacha cada request al worker mas conveniente segun estado, capacidad y disponibilidad.
+Cada nodo worker es la misma aplicacion desplegada 3 veces con diferente `WORKER_NODE_ID` y puertos externos distintos. El coordinador mantiene una cola central durable de solicitudes, leases de ownership por request y despacha cada trabajo al worker mas conveniente segun estado, capacidad, latencia observada y disponibilidad.
 
 ## Healthchecks y metricas
 
@@ -167,12 +168,20 @@ Coordinador:
 - `COORDINATOR_NODE_ID`
 - `COORDINATOR_BIND_HOST`
 - `COORDINATOR_BIND_PORT`
+- `COORDINATOR_STATE_DIR`
+- `COORDINATOR_STATE_URI_PREFIX`
 - `COORDINATOR_WORKERS`
 - `COORDINATOR_DISPATCH_CONCURRENCY`
 - `COORDINATOR_DISPATCH_WAIT_SECONDS`
 - `COORDINATOR_STATUS_POLL_SECONDS`
 - `COORDINATOR_RPC_TIMEOUT_SECONDS`
+- `COORDINATOR_OWNERSHIP_LEASE_SECONDS`
 - `COORDINATOR_LOG_LEVEL`
+- `COORDINATOR_STORAGE_ENDPOINT_URL`
+- `COORDINATOR_STORAGE_ACCESS_KEY_ID`
+- `COORDINATOR_STORAGE_SECRET_ACCESS_KEY`
+- `COORDINATOR_STORAGE_REGION`
+- `COORDINATOR_STORAGE_FORCE_PATH_STYLE`
 - `COORDINATOR_GRPC_SERVER_CERT_FILE`
 - `COORDINATOR_GRPC_SERVER_KEY_FILE`
 - `COORDINATOR_GRPC_SERVER_CLIENT_CA_FILE`
@@ -224,7 +233,7 @@ Coordinador:
 ## Hardening agregado
 
 - Reconexion gRPC con backoff exponencial y `keepalive`.
-- Coordinador funcional con cola central y despacho a workers reales via `ImageNodeService`.
+- Coordinador funcional con cola central durable, leases de ownership, deduplicacion global y despacho a workers reales via `ImageNodeService`.
 - Health server listo para Docker y orquestadores.
 - Manejo de `SIGINT` y `SIGTERM` para cierre ordenado.
 - Persistencia ligera de resultados terminales para deduplicacion tras reinicios sobre storage local o compartido.
@@ -236,6 +245,6 @@ Coordinador:
 
 ## Limitaciones actuales
 
-- El coordinador implementado cubre cola central, balanceo global basico y callbacks, pero no persiste su cola global ni replicas de estado entre multiples instancias del propio coordinador.
+- El coordinador ya persiste cola global y ownership por solicitud, pero sigue siendo de una sola instancia; todavia no hay replicacion activa, eleccion de lider ni failover automatico entre coordinadores.
 - OCR e inferencia requieren un backend ejecutable provisto por el operador.
-- La propiedad de la ejecucion sigue siendo por worker; no existe ownership compartido de una misma tarea entre multiples workers.
+- No existe un log distribuido o broker compartido entre multiples coordinadores; la durabilidad actual se basa en storage persistente, no en consenso distribuido.
