@@ -5,7 +5,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import Iterable
+from typing import Any, Iterable
 from uuid import uuid4
 
 from PIL import Image, UnidentifiedImageError
@@ -25,11 +25,11 @@ class BusinessRequest:
     image_data: bytes
     file_name: str
     filters: list[str]
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=lambda: {})
 
 
 class ImageNodeBusinessService:
-    def __init__(self, node, metrics) -> None:
+    def __init__(self, node: Any, metrics: Any) -> None:
         self._node = node
         self._metrics = metrics
         self._config = node._config
@@ -62,7 +62,7 @@ class ImageNodeBusinessService:
         tasks = [self._process_request_safe(item) for item in requests]
         return await asyncio.gather(*tasks)
 
-    async def upload_large_image(self, chunks: Iterable) -> tuple[bytes, ExecutionResultRecord]:
+    async def upload_large_image(self, chunks: Iterable[Any]) -> tuple[bytes, ExecutionResultRecord]:
         payload = bytearray()
         file_name = ""
         filters: list[str] = []

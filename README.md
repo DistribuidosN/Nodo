@@ -121,6 +121,8 @@ El worker ya incluye:
 proto/
 scripts/
 worker/
+  ARCHITECTURE.md
+  server.py
   core/
   execution/
   grpc/
@@ -130,6 +132,18 @@ worker/
 examples/
 tests/
 ```
+
+Ruta recomendada para entender el codigo:
+
+1. `worker/server.py`
+2. `worker/core/worker_runtime.py`
+3. `worker/grpc/image_node_service.py`
+4. `worker/grpc/worker_control_service.py`
+5. `worker/execution/`
+
+Los archivos con nombres antiguos como `main.py`, `node.py`, `servicer.py` o
+`business_servicer.py` siguen existiendo para compatibilidad, pero los modulos
+anteriores son los nombres canonicos para leer y mantener el proyecto.
 
 ## Instalación
 
@@ -225,6 +239,12 @@ Worker:
 
 ```bash
 python -m worker
+```
+
+Entrada canonica equivalente:
+
+```bash
+python -m worker.server
 ```
 
 Enviar una tarea de control a un worker:

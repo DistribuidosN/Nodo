@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from worker.core.serde import (
@@ -77,7 +77,7 @@ class StateStore:
 
     def append_result(self, result: ExecutionResultRecord, idempotency_key: str) -> None:
         self.ensure()
-        payload = {"idempotency_key": idempotency_key, "result": result_to_dict(result)}
+        payload: dict[str, Any] = {"idempotency_key": idempotency_key, "result": result_to_dict(result)}
         uri = self._storage.join(self._completed_dir, f"{_safe_name(idempotency_key)}.json")
         self._storage.write_text(uri, json.dumps(payload, ensure_ascii=True))
 
@@ -130,9 +130,9 @@ class EventSpoolStore:
         event_id = f"{int(time.time() * 1000)}-{uuid4().hex}"
         event_payload: dict[str, Any]
         if kind == "progress":
-            event_payload = progress_to_dict(payload)
+            event_payload = progress_to_dict(cast(ProgressEventRecord, payload))
         else:
-            event_payload = result_to_dict(payload)
+            event_payload = result_to_dict(cast(ExecutionResultRecord, payload))
         uri = self._storage.join(self._spool_dir, f"{event_id}.json")
         self._storage.write_text(
             uri,
