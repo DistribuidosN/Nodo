@@ -1,329 +1,260 @@
 # Distributed Image Workers
 
-Subsistema de nodos worker para procesamiento distribuido de imágenes en Python con `asyncio + grpc.aio`.
+Repositorio de workers en Python para procesamiento de imagenes por gRPC.
 
-Este repositorio ya no despliega coordinador propio. La arquitectura objetivo es:
-
-`Cliente -> Servidor principal Java -> Workers Python`
-
-El servidor principal en Java se encarga de autenticación, base de datos, reglas de negocio y coordinación global. Este repo contiene únicamente:
-
-- `3` workers listos para exponer gRPC.
-- interfaces protobuf para que el servidor Java se conecte.
-- cola local con prioridad, scheduling interno, backpressure y retries.
-- OCR e inferencia concretos dentro del worker.
-- storage compartido opcional con MinIO/S3.
-- métricas, healthchecks, Prometheus y Grafana.
-
-## Arquitectura
-
-Cada worker hace esto:
-
-- recibe tareas por gRPC;
-- valida tamaño, dimensiones, filtros y lotes;
-- encola localmente con prioridad;
-- decide cuándo ejecutar según recursos;
-- procesa la imagen en paralelo;
-- persiste resultados/estado;
-- opcionalmente reporta progreso, heartbeat y resultados al servidor principal externo si este implementa el callback gRPC.
-
-## Contratos gRPC
-
-### 1. Servicio de negocio expuesto por cada worker
-
-Archivo: [`proto/imagenode.proto`](c:/Users/acero/Downloads/nodos/Nodo/proto/imagenode.proto)
-
-Servicio:
-
-- `ImageNodeService`
-
-RPCs principales:
-
-- `ProcessToPath`
-- `ProcessToData`
-- `UploadLargeImage`
-- `StreamBatchProcess`
-- `ProcessBatch`
-- `HealthCheck`
-- `GetMetrics`
-- `GetProcessedFilePaths`
-- `FindPathByName`
-- `GetProcessedImages`
-- `FindImageByName`
-
-Este es el contrato más natural para que el servidor principal Java invoque procesamiento directamente.
-
-### 2. Servicio de control expuesto por cada worker
-
-Archivo: [`proto/worker_node.proto`](c:/Users/acero/Downloads/nodos/Nodo/proto/worker_node.proto)
-
-Servicio:
-
-- `WorkerControlService`
-
-RPCs principales:
-
-- `SubmitTask`
-- `GetNodeStatus`
-- `CancelTask`
-- `DrainNode`
-- `ShutdownNode`
-
-Este contrato sirve si el servidor principal quiere controlar cola, estado y ciclo de vida del worker de forma explícita.
-
-### 3. Callback opcional que debe implementar el servidor principal
-
-Archivo: [`proto/worker_node.proto`](c:/Users/acero/Downloads/nodos/Nodo/proto/worker_node.proto)
-
-Servicio:
-
-- `CoordinatorCallbackService`
-
-RPCs:
-
-- `ReportProgress`
-- `ReportResult`
-- `Heartbeat`
-
-Si configuras `WORKER_COORDINATOR_TARGET`, el worker enviará estos callbacks al servidor principal. Si lo dejas vacío, el worker funciona en modo standalone.
-
-## Funcionalidad del worker
-
-Transformaciones soportadas:
-
-- `grayscale`
-- `resize`
-- `crop`
-- `rotate`
-- `flip`
-- `blur`
-- `sharpen`
-- `brightness/contrast`
-- `watermark/text`
-- conversión de formato: `jpg`, `png`, `tif`, `webp`, `bmp`, `gif`, `ico`
-- `ocr`
-- `inference`
-
-El worker ya incluye:
-
-- validación estricta de entrada;
-- persistencia de pendientes y resultados;
-- deduplicación local;
-- cancelación cooperativa;
-- backpressure con HWM/LWM;
-- métricas Prometheus;
-- healthchecks `/livez` y `/readyz`;
-- mTLS opcional.
-
-## Estructura
+Arquitectura final del sistema:
 
 ```text
-proto/
-scripts/
+Cliente -> Servidor principal Java -> Workers Python
+```
+
+El servidor principal en Java se encarga de:
+- autenticacion
+- base de datos
+- logica de negocio
+- decision de a que worker enviar cada tarea
+- metricas historicas
+- graficas y paneles
+
+Este repositorio deja listo solo el lado de los workers.
+
+## Que expone cada worker
+
+Cada worker levanta un servidor gRPC con dos contratos:
+
+- `imagenode.ImageNodeService`
+  Contrato de negocio para pedir procesamiento de imagenes.
+
+- `worker.WorkerControlService`
+  Contrato de control del nodo para consultar estado, enviar tareas, cancelar, drenar o apagar.
+
+Protos:
+
+- [proto/imagenode.proto](proto/imagenode.proto)
+- [proto/worker_node.proto](proto/worker_node.proto)
+
+## Estructura recomendada para leer el proyecto
+
+Empieza por estos archivos:
+
+1. [worker/server.py](worker/server.py)
+2. [worker/core/worker_runtime.py](worker/core/worker_runtime.py)
+3. [worker/grpc/image_node_service.py](worker/grpc/image_node_service.py)
+4. [worker/grpc/worker_control_service.py](worker/grpc/worker_control_service.py)
+5. [worker/execution](worker/execution)
+
+Arbol principal:
+
+```text
 worker/
-  ARCHITECTURE.md
   server.py
+  config.py
+  ARCHITECTURE.md
   core/
   execution/
   grpc/
   models/
   scheduler/
   telemetry/
+proto/
 examples/
 tests/
 ```
 
-Ruta recomendada para entender el codigo:
+Los archivos con nombres viejos se mantienen por compatibilidad, pero los
+modulos anteriores son los nombres canonicos para leer y mantener el proyecto.
 
-1. `worker/server.py`
-2. `worker/core/worker_runtime.py`
-3. `worker/grpc/image_node_service.py`
-4. `worker/grpc/worker_control_service.py`
-5. `worker/execution/`
+## Modos de despliegue
 
-Los archivos con nombres antiguos como `main.py`, `node.py`, `servicer.py` o
-`business_servicer.py` siguen existiendo para compatibilidad, pero los modulos
-anteriores son los nombres canonicos para leer y mantener el proyecto.
+### 1. Produccion: un worker por maquina o VM
 
-## Instalación
+Archivo:
 
-```bash
-python -m pip install -e .[dev]
-```
+- [docker-compose.yml](docker-compose.yml)
 
-En Windows PowerShell:
+Este modo levanta solo:
+
+- `worker`
+
+Puertos por defecto:
+
+- gRPC: `127.0.0.1:50051`
+- Health: `http://127.0.0.1:8081/readyz`
+- Metrics: `http://127.0.0.1:9100/metrics`
+
+Uso:
 
 ```powershell
-Copy-Item .env.example .env
+docker compose up -d --build
+docker compose ps
 ```
 
-## Variables importantes
+Para apagar:
 
-### Integración con el servidor principal
+```powershell
+docker compose down
+```
 
-- `APP_SERVER_GRPC_TARGET`
-- `APP_SERVER_SERVER_NAME_OVERRIDE`
-- `WORKER_COORDINATOR_TARGET`
-- `WORKER_COORDINATOR_CA_FILE`
-- `WORKER_COORDINATOR_CLIENT_CERT_FILE`
-- `WORKER_COORDINATOR_CLIENT_KEY_FILE`
+### 2. Desarrollo local: tres workers y herramientas auxiliares
 
-Si `WORKER_COORDINATOR_TARGET` está vacío, el worker no intenta reportar callbacks.
+Archivo:
 
-### Límites de entrada
+- [docker-compose-dev.yml](docker-compose-dev.yml)
 
-- `WORKER_MAX_REQUEST_BYTES`
-- `WORKER_MAX_BATCH_SIZE`
-- `WORKER_MAX_FILTERS_PER_REQUEST`
-- `WORKER_MAX_IMAGE_WIDTH`
-- `WORKER_MAX_IMAGE_HEIGHT`
-- `WORKER_MAX_IMAGE_PIXELS`
+Este modo levanta:
 
-### Storage
-
-- `WORKER_OUTPUT_URI_PREFIX`
-- `WORKER_STATE_URI_PREFIX`
-- `WORKER_REQUIRE_SHARED_STORAGE`
-- `WORKER_STORAGE_ENDPOINT_URL`
-- `WORKER_STORAGE_ACCESS_KEY_ID`
-- `WORKER_STORAGE_SECRET_ACCESS_KEY`
-- `WORKER_STORAGE_REGION`
-- `WORKER_STORAGE_FORCE_PATH_STYLE`
-
-## Levantar el stack Docker de workers
-
-Este `docker-compose` levanta:
-
-- `minio`
 - `worker1`
 - `worker2`
 - `worker3`
+- `minio`
 - `prometheus`
 - `grafana`
 
-Comando:
+Uso:
 
-```bash
-docker compose up --build
+```powershell
+python scripts/generate_dev_security_assets.py
+docker compose -f docker-compose-dev.yml up -d --build
+docker compose -f docker-compose-dev.yml ps
 ```
 
-Puertos:
+Para apagar:
 
-- Worker 1 gRPC: `127.0.0.1:50051`
-- Worker 2 gRPC: `127.0.0.1:50061`
-- Worker 3 gRPC: `127.0.0.1:50071`
-- Worker 1 health: `http://127.0.0.1:8081/readyz`
-- Worker 2 health: `http://127.0.0.1:8082/readyz`
-- Worker 3 health: `http://127.0.0.1:8083/readyz`
-- Worker 1 metrics: `http://127.0.0.1:9101`
-- Worker 2 metrics: `http://127.0.0.1:9102`
-- Worker 3 metrics: `http://127.0.0.1:9103`
-- MinIO API: `http://127.0.0.1:9000`
-- MinIO Console: `http://127.0.0.1:9001`
-- Prometheus: `http://127.0.0.1:9090`
-- Grafana: `http://127.0.0.1:3000`
+```powershell
+docker compose -f docker-compose-dev.yml down
+```
 
-Grafana usa por defecto:
+## Configuracion
 
-- usuario: `admin`
-- clave: `admin`
+### Produccion
 
-Puedes cambiarlo con:
+Plantilla:
 
-- `GRAFANA_ADMIN_USER`
-- `GRAFANA_ADMIN_PASSWORD`
+- [.env.production.example](.env.production.example)
 
-## Ejecución local simple
+Variables importantes:
 
-Worker:
+- `WORKER_NODE_ID`
+- `WORKER_BIND_HOST`
+- `WORKER_BIND_PORT`
+- `WORKER_COORDINATOR_TARGET`
+- `WORKER_OUTPUT_DIR`
+- `WORKER_STATE_DIR`
+- `WORKER_METRICS_PORT`
+- `WORKER_HEALTH_PORT`
 
-```bash
+### Desarrollo local
+
+Plantilla:
+
+- [.env.example](.env.example)
+
+## Correr un worker sin Docker
+
+Instalar dependencias:
+
+```powershell
+python -m pip install -e .[dev]
+```
+
+Levantar el worker:
+
+```powershell
 python -m worker
 ```
 
-Entrada canonica equivalente:
+Entrada equivalente explicita:
 
-```bash
+```powershell
 python -m worker.server
 ```
 
-Enviar una tarea de control a un worker:
+## Probar el worker
 
-```bash
+### Enviar una tarea al contrato de control
+
+```powershell
 python examples/submit_task.py --target 127.0.0.1:50051
 ```
 
-Enviar una solicitud de negocio:
+### Enviar una imagen real al contrato de negocio
 
-```bash
-python examples/imagenode_client.py --target 127.0.0.1:50051
-```
-
-Enviar una imagen real:
-
-```bash
+```powershell
 python examples/send_real_image.py --file "C:\ruta\imagen.png" --target 127.0.0.1:50051 --filter grayscale
 ```
 
-Prueba de carga:
+### Ver salud
 
-```bash
-python examples/load_submitter.py --target 127.0.0.1:50051 --count 50 --concurrency 8
+En navegador:
+
+- `http://127.0.0.1:8081/livez`
+- `http://127.0.0.1:8081/readyz`
+
+O en terminal:
+
+```powershell
+curl http://127.0.0.1:8081/readyz
 ```
 
-Demo extremo a extremo sobre un worker:
+## Como se integra el servidor principal Java
 
-```bash
-python scripts/demo_end_to_end.py --target 127.0.0.1:50051 --output-dir docs/demo
-```
+Flujo esperado:
 
-## Observabilidad
+1. El servidor Java recibe la solicitud del cliente.
+2. Consulta que workers estan disponibles.
+3. Elige el worker mas conveniente.
+4. Llama por gRPC:
+   - `ImageNodeService` para procesamiento de negocio
+   - o `WorkerControlService` para control fino del nodo
+5. Recibe el resultado.
+6. Guarda estado, metricas historicas y graficas en su propia BD.
 
-Métricas relevantes:
+En corto:
 
-- `worker_queue_length`
-- `worker_report_queue_length`
-- `worker_processing_time_ms`
-- `worker_success_total`
-- `worker_failure_total`
-- `worker_retry_total`
-- `worker_tasks_rejected_total`
-- `worker_tasks_cancelled_total`
-- `worker_cpu_utilization_ratio`
-- `worker_memory_utilization_ratio`
-- `worker_active_tasks`
-- `worker_capacity_effective`
-- `worker_coordinator_connected`
-- `worker_readiness`
+- Java decide y coordina.
+- Python procesa.
 
-Prometheus scrapea automáticamente los tres workers y Grafana provisiona el dashboard `Distributed Image Worker`.
+## Metricas y health
 
-## Seguridad
+El worker puede exponer:
 
-El stack Docker usa mTLS en el servidor gRPC del worker.
+- `livez`
+- `readyz`
+- `metrics`
 
-Archivos de desarrollo:
+Eso es util para operacion, pruebas o integracion, pero la responsabilidad de
+guardar historicos y construir graficas debe quedar del lado del servidor
+principal.
 
-- `.secrets/pki/root-ca.crt`
-- `.secrets/pki/worker-server.crt`
-- `.secrets/pki/worker-server.key`
-- `.secrets/pki/worker-client.crt`
-- `.secrets/pki/worker-client.key`
+## Scripts utiles
 
-Si tu servidor principal Java va a consumir los workers por mTLS, debe confiar en la CA correcta y, si aplica, presentar certificado cliente válido.
+- [scripts/demo_end_to_end.py](scripts/demo_end_to_end.py)
+- [scripts/generate_dev_security_assets.py](scripts/generate_dev_security_assets.py)
+- [scripts/healthcheck.py](scripts/healthcheck.py)
+- [scripts/ocr_backend.py](scripts/ocr_backend.py)
+- [scripts/inference_backend.py](scripts/inference_backend.py)
 
-## Tests
+## Comandos rapidos con PowerShell
 
-```bash
-python -m pytest
-```
+- `.\run.ps1 worker-stack`
+  Levanta un worker individual.
 
-## Estado del proyecto
+- `.\run.ps1 worker-down`
+  Baja el worker individual.
 
-Este repositorio queda alineado a la arquitectura final:
+- `.\run.ps1 dev-stack`
+  Levanta el entorno local completo.
 
-- el backend principal Java coordina;
-- los workers Python ejecutan;
-- este repo no asume autenticación de usuario, base de datos de negocio ni orquestación global propia.
+- `.\run.ps1 dev-down`
+  Baja el entorno local completo.
 
-El único componente de coordinación que queda aquí es el ejemplo [`examples/mock_app_server.py`](c:/Users/acero/Downloads/nodos/Nodo/examples/mock_app_server.py), pensado solo para pruebas locales del contrato de callbacks.
+- `.\run.ps1 test`
+  Ejecuta los tests.
+
+## Estado final
+
+El proyecto queda preparado para:
+
+- desplegar un worker por maquina o VM
+- dejar la coordinacion real en el servidor principal Java
+- mantener un entorno local separado para pruebas con varios workers

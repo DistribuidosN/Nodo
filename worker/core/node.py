@@ -104,8 +104,12 @@ class WorkerNode:
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         self._restore_completed_state()
         await self._restore_pending_tasks()
-        self._metrics.start_server(self._config.metrics_host, self._config.metrics_port)
-        self._health_server.start()
+        # Start Prometheus metrics server (disable by setting WORKER_METRICS_PORT=0)
+        if self._config.metrics_port > 0:
+            self._metrics.start_server(self._config.metrics_host, self._config.metrics_port)
+        # Start HTTP health check server (disable by setting WORKER_HEALTH_PORT=0)
+        if self._config.health_port > 0:
+            self._health_server.start()
         await self._reporter.start()
         self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="worker-scheduler")
         self._health_task = asyncio.create_task(self._health_loop(), name="worker-health")
@@ -126,7 +130,9 @@ class WorkerNode:
                 await self._scheduler_task
         await self._execution_manager.shutdown()
         await self._reporter.stop()
-        self._health_server.stop()
+        # Stop health server if it was started
+        if self._config.health_port > 0:
+            self._health_server.stop()
 
     async def submit_task(self, task: Task) -> dict:
         async with self._task_lock:

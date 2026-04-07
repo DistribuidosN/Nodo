@@ -1,7 +1,7 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("install", "protos", "stack", "down", "test", "demo")]
-    [string]$Command = "stack"
+    [ValidateSet("install", "protos", "dev-stack", "dev-down", "worker-stack", "worker-down", "test", "demo")]
+    [string]$Command = "worker-stack"
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,13 +21,20 @@ switch ($Command) {
         Invoke-Step "Generando protos worker_node" { python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/worker_node.proto }
         Invoke-Step "Generando protos imagenode" { python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/imagenode.proto }
     }
-    "stack" {
+    "dev-stack" {
         Invoke-Step "Generando certificados y secretos de desarrollo" { python scripts/generate_dev_security_assets.py }
-        Invoke-Step "Levantando stack de workers" { docker compose up -d --build }
+        Invoke-Step "Levantando entorno local completo" { docker compose -f docker-compose-dev.yml up -d --build }
+        Invoke-Step "Mostrando servicios" { docker compose -f docker-compose-dev.yml ps }
+    }
+    "dev-down" {
+        Invoke-Step "Bajando entorno local completo" { docker compose -f docker-compose-dev.yml down }
+    }
+    "worker-stack" {
+        Invoke-Step "Levantando worker individual" { docker compose up -d --build }
         Invoke-Step "Mostrando servicios" { docker compose ps }
     }
-    "down" {
-        Invoke-Step "Bajando stack" { docker compose down }
+    "worker-down" {
+        Invoke-Step "Bajando worker individual" { docker compose down }
     }
     "test" {
         Invoke-Step "Ejecutando tests" { python -m pytest }

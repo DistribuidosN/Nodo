@@ -1,305 +1,84 @@
+# SINGLE WORKER PRODUCTION DEPLOYMENT
+# For development with multiple workers + monitoring, use: docker-compose-dev.yml
+# 
+# This minimal setup runs a single worker with no external dependencies.
+# Use for production deployment where:
+# - Each worker runs independently on its own machine/VM
+# - Java backend server handles coordination, metrics collection, etc.
+
 services:
-  minio:
-    image: minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/minio_access_key
-      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_secret_key
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-lc"]
-    command: >
-      "mc alias set local http://minio:9000 $(cat /run/secrets/minio_access_key) $(cat /run/secrets/minio_secret_key) &&
-       mc mb --ignore-existing local/distributed-state &&
-       mc mb --ignore-existing local/distributed-output"
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-
-  prometheus:
-    image: prom/prometheus:v2.54.1
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-    ports:
-      - "9090:9090"
-    depends_on:
-      worker1:
-        condition: service_started
-      worker2:
-        condition: service_started
-      worker3:
-        condition: service_started
-
-  grafana:
-    image: grafana/grafana-oss:11.1.0
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./deploy/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./deploy/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports:
-      - "3000:3000"
-    depends_on:
-      prometheus:
-        condition: service_started
-
-  worker1:
+  worker:
     build:
       context: .
+      dockerfile: Dockerfile
     init: true
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    command:
-      [
-        "/bin/sh",
-        "-lc",
-        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
-         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
-         python -m worker"
-      ]
+    # Environment variables below are DEFAULTS.
+    # Override them when running the container to match your production setup.
     environment:
-      WORKER_NODE_ID: worker-1
-      WORKER_BIND_HOST: 0.0.0.0
-      WORKER_BIND_PORT: 50051
-      WORKER_COORDINATOR_TARGET: ${APP_SERVER_GRPC_TARGET:-}
-      WORKER_METRICS_HOST: 0.0.0.0
-      WORKER_METRICS_PORT: 9101
-      WORKER_HEALTH_HOST: 0.0.0.0
-      WORKER_HEALTH_PORT: 8081
-      WORKER_OUTPUT_DIR: /app/data/out
-      WORKER_STATE_DIR: /app/data/state
-      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-1
-      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
-      WORKER_REQUIRE_SHARED_STORAGE: "true"
-      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
-      WORKER_STORAGE_REGION: us-east-1
-      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
-      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
-      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
-      WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
-      WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
-      WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
-      WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
-      WORKER_COORDINATOR_CA_FILE: /run/secrets/root_ca_cert
-      WORKER_COORDINATOR_CLIENT_CERT_FILE: /run/secrets/worker_client_cert
-      WORKER_COORDINATOR_CLIENT_KEY_FILE: /run/secrets/worker_client_key
-      WORKER_COORDINATOR_SERVER_NAME_OVERRIDE: ${APP_SERVER_SERVER_NAME_OVERRIDE:-}
+      # === REQUIRED CONFIG ===
+      WORKER_NODE_ID: ${WORKER_NODE_ID:-worker-production}
+      WORKER_BIND_HOST: ${WORKER_BIND_HOST:-0.0.0.0}
+      WORKER_BIND_PORT: ${WORKER_BIND_PORT:-50051}
+      
+      # === OPTIONAL: Java Backend Server Callback ===
+      # Leave empty if your Java backend doesn't have a gRPC callback service
+      # Set to "java-server:50052" if Java backend listens on a different machine
+      WORKER_COORDINATOR_TARGET: ${WORKER_COORDINATOR_TARGET:-}
+      
+      # === OPTIONAL: Metrics Export ===
+      # Disable (set to 0) if you don't expose Prometheus metrics
+      WORKER_METRICS_HOST: ${WORKER_METRICS_HOST:-0.0.0.0}
+      WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9100}
+      
+      # === OPTIONAL: Health Checks ===
+      # Disable (set to 0) if your orchestrator doesn't use HTTP health probes
+      WORKER_HEALTH_HOST: ${WORKER_HEALTH_HOST:-0.0.0.0}
+      WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8081}
+      
+      # === STORAGE (Use local disk by default, no shared storage) ===
+      WORKER_OUTPUT_DIR: ${WORKER_OUTPUT_DIR:-/app/data/out}
+      WORKER_STATE_DIR: ${WORKER_STATE_DIR:-/app/data/state}
+      # Keep shared storage disabled (false) for single-worker deployments
+      WORKER_REQUIRE_SHARED_STORAGE: "false"
+      
+      # === IMAGE PROCESSING BACKENDS ===
+      WORKER_OCR_COMMAND: ${WORKER_OCR_COMMAND:-["python","scripts/ocr_backend.py"]}
+      WORKER_INFERENCE_COMMAND: ${WORKER_INFERENCE_COMMAND:-["python","scripts/inference_backend.py"]}
+      
+      # === OPTIONAL: TLS Configuration ===
+      # For production, use TLS. Set these to your certificate paths.
+      # WORKER_GRPC_SERVER_CERT_FILE: /etc/worker/certs/server.crt
+      # WORKER_GRPC_SERVER_KEY_FILE: /etc/worker/certs/server.key
+      # WORKER_GRPC_SERVER_CLIENT_CA_FILE: /etc/worker/certs/ca.crt (if mTLS required)
+      # WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "false"
+      
+      # === OPTIONAL: Java Backend TLS ===
+      # If your Java backend uses TLS, configure:
+      # WORKER_COORDINATOR_CA_FILE: /etc/worker/certs/java-ca.crt
+      # WORKER_COORDINATOR_CLIENT_CERT_FILE: /etc/worker/certs/client.crt
+      # WORKER_COORDINATOR_CLIENT_KEY_FILE: /etc/worker/certs/client.key
+      
+      WORKER_LOG_LEVEL: ${WORKER_LOG_LEVEL:-INFO}
+    
     ports:
-      - "50051:50051"
-      - "8081:8081"
-      - "9101:9101"
+      - "${WORKER_BIND_PORT:-50051}:${WORKER_BIND_PORT:-50051}"
+      - "${WORKER_HEALTH_PORT:-8081}:${WORKER_HEALTH_PORT:-8081}"
+      - "${WORKER_METRICS_PORT:-9100}:${WORKER_METRICS_PORT:-9100}"
+    
     volumes:
-      - worker1-data:/app/data
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-      - root_ca_cert
-      - worker_server_cert
-      - worker_server_key
-      - worker_client_cert
-      - worker_client_key
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - worker-data:/app/data                       # Persistent storage for outputs + state
+      # Uncomment to mount certificates:
+      # - /etc/worker/certs:/etc/worker/certs:ro
+    
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
       interval: 15s
       timeout: 3s
       retries: 5
       start_period: 15s
-
-  worker2:
-    build:
-      context: .
-    init: true
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    command:
-      [
-        "/bin/sh",
-        "-lc",
-        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
-         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
-         python -m worker"
-      ]
-    environment:
-      WORKER_NODE_ID: worker-2
-      WORKER_BIND_HOST: 0.0.0.0
-      WORKER_BIND_PORT: 50051
-      WORKER_COORDINATOR_TARGET: ${APP_SERVER_GRPC_TARGET:-}
-      WORKER_METRICS_HOST: 0.0.0.0
-      WORKER_METRICS_PORT: 9102
-      WORKER_HEALTH_HOST: 0.0.0.0
-      WORKER_HEALTH_PORT: 8082
-      WORKER_OUTPUT_DIR: /app/data/out
-      WORKER_STATE_DIR: /app/data/state
-      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-2
-      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
-      WORKER_REQUIRE_SHARED_STORAGE: "true"
-      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
-      WORKER_STORAGE_REGION: us-east-1
-      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
-      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
-      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
-      WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
-      WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
-      WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
-      WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
-      WORKER_COORDINATOR_CA_FILE: /run/secrets/root_ca_cert
-      WORKER_COORDINATOR_CLIENT_CERT_FILE: /run/secrets/worker_client_cert
-      WORKER_COORDINATOR_CLIENT_KEY_FILE: /run/secrets/worker_client_key
-      WORKER_COORDINATOR_SERVER_NAME_OVERRIDE: ${APP_SERVER_SERVER_NAME_OVERRIDE:-}
-    ports:
-      - "50061:50051"
-      - "8082:8082"
-      - "9102:9102"
-    volumes:
-      - worker2-data:/app/data
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-      - root_ca_cert
-      - worker_server_cert
-      - worker_server_key
-      - worker_client_cert
-      - worker_client_key
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
-      interval: 15s
-      timeout: 3s
-      retries: 5
-      start_period: 15s
-
-  worker3:
-    build:
-      context: .
-    init: true
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    command:
-      [
-        "/bin/sh",
-        "-lc",
-        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
-         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
-         python -m worker"
-      ]
-    environment:
-      WORKER_NODE_ID: worker-3
-      WORKER_BIND_HOST: 0.0.0.0
-      WORKER_BIND_PORT: 50051
-      WORKER_COORDINATOR_TARGET: ${APP_SERVER_GRPC_TARGET:-}
-      WORKER_METRICS_HOST: 0.0.0.0
-      WORKER_METRICS_PORT: 9103
-      WORKER_HEALTH_HOST: 0.0.0.0
-      WORKER_HEALTH_PORT: 8083
-      WORKER_OUTPUT_DIR: /app/data/out
-      WORKER_STATE_DIR: /app/data/state
-      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-3
-      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
-      WORKER_REQUIRE_SHARED_STORAGE: "true"
-      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
-      WORKER_STORAGE_REGION: us-east-1
-      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
-      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
-      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
-      WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
-      WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
-      WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
-      WORKER_GRPC_SERVER_REQUIRE_CLIENT_AUTH: "true"
-      WORKER_COORDINATOR_CA_FILE: /run/secrets/root_ca_cert
-      WORKER_COORDINATOR_CLIENT_CERT_FILE: /run/secrets/worker_client_cert
-      WORKER_COORDINATOR_CLIENT_KEY_FILE: /run/secrets/worker_client_key
-      WORKER_COORDINATOR_SERVER_NAME_OVERRIDE: ${APP_SERVER_SERVER_NAME_OVERRIDE:-}
-    ports:
-      - "50071:50051"
-      - "8083:8083"
-      - "9103:9103"
-    volumes:
-      - worker3-data:/app/data
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-      - root_ca_cert
-      - worker_server_cert
-      - worker_server_key
-      - worker_client_cert
-      - worker_client_key
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
-      interval: 15s
-      timeout: 3s
-      retries: 5
-      start_period: 15s
-
-secrets:
-  minio_access_key:
-    file: ./.secrets/minio_access_key.txt
-  minio_secret_key:
-    file: ./.secrets/minio_secret_key.txt
-  root_ca_cert:
-    file: ./.secrets/pki/root-ca.crt
-  worker_server_cert:
-    file: ./.secrets/pki/worker-server.crt
-  worker_server_key:
-    file: ./.secrets/pki/worker-server.key
-  worker_client_cert:
-    file: ./.secrets/pki/worker-client.crt
-  worker_client_key:
-    file: ./.secrets/pki/worker-client.key
 
 volumes:
-  minio-data:
-  prometheus-data:
-  grafana-data:
-  worker1-data:
-  worker2-data:
-  worker3-data:
+  worker-data:

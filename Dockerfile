@@ -13,7 +13,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
-COPY coordinator ./coordinator
 COPY proto ./proto
 COPY worker ./worker
 COPY examples ./examples
@@ -32,4 +31,4 @@ EXPOSE 50051 8081 9100
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
   CMD python scripts/healthcheck.py ready
 
-CMD ["python", "-m", "worker"]
+CMD ["python", "-m", "worker.server"]
