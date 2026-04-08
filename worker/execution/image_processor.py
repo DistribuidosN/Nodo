@@ -58,7 +58,7 @@ def process_image(
         image = apply_transform_checked(task, image, transform.operation, transform.params)
 
     requested_format = (task.output_format or task.input_image.image_format or "png").lower()
-    output_bytes, save_format = serialize_image(image, requested_format)
+    output_bytes, _ = serialize_image(image, requested_format)
     width, height = image.size
     output_uri = resolve_output_uri(task, requested_format, output_uri_prefix)
     output_path, size_bytes = persist_output_bytes(
@@ -76,7 +76,6 @@ def process_image(
 def process_transform_stage(
     task: Task,
     payload: bytes,
-    input_format: str | None,
     operation: OperationType,
     params: dict[str, str],
     stage_output_format: str = "png",
@@ -194,7 +193,11 @@ def _apply_transform(task: Task, image: Image.Image, operation: OperationType, p
         height = int(params["height"])
         return image.resize((width, height), resample=Image.Resampling.LANCZOS)
     if operation == OperationType.CROP:
-        box = tuple(int(params[key]) for key in ("left", "upper", "right", "lower"))
+        left = float(params["left"])
+        upper = float(params["upper"])
+        right = float(params["right"])
+        lower = float(params["lower"])
+        box: tuple[float, float, float, float] = (left, upper, right, lower)
         return image.crop(box)
     if operation == OperationType.ROTATE:
         angle = float(params.get("angle", "0"))
@@ -243,7 +246,7 @@ def _resize_cooperative(task: Task, image: Image.Image, params: dict[str, str]) 
 def _rotate_cooperative(task: Task, image: Image.Image, params: dict[str, str]) -> Image.Image:
     angle = float(params.get("angle", "0"))
     expand = params.get("expand", "true").lower() == "true"
-    if angle == 0:
+    if math.isclose(angle, 0.0, abs_tol=1e-9):
         return image
     current = image
     step_limit = max(float(params.get("step_degrees", "10")), 1.0)
@@ -270,7 +273,7 @@ def _blur_cooperative(task: Task, image: Image.Image, params: dict[str, str]) ->
 
 def _sharpen_cooperative(task: Task, image: Image.Image, params: dict[str, str]) -> Image.Image:
     factor = float(params.get("factor", "2.0"))
-    if factor == 1.0:
+    if math.isclose(factor, 1.0, abs_tol=1e-9):
         return image
     current = image
     passes = max(1, math.ceil(abs(factor - 1.0) / 0.75))
@@ -470,9 +473,10 @@ def _merge_adapter_metadata(task: Task, operation: OperationType, payload: dict[
         task.metadata[f"{prefix}_text"] = payload
         return
 
-    metadata = payload.get("metadata")
-    if isinstance(metadata, dict):
-        for key, value in metadata.items():
+    metadata_obj = payload.get("metadata")
+    if isinstance(metadata_obj, dict):
+        metadata_dict = cast(dict[str, object], metadata_obj)
+        for key, value in metadata_dict.items():
             task.metadata[f"{prefix}_{key}"] = _stringify(value)
 
     for key in ("text", "artifact_uri", "artifact_path", "score", "label"):
@@ -487,7 +491,7 @@ def _result_metadata(task: Task, **extras: str) -> dict[str, str]:
     metadata = {
         key: value
         for key, value in task.metadata.items()
-        if key not in INTERNAL_RESULT_METADATA_KEYS and isinstance(value, str)
+        if key not in INTERNAL_RESULT_METADATA_KEYS
     }
     metadata.update(extras)
     return metadata

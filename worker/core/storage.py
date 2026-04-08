@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import os
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
@@ -35,7 +36,7 @@ class StorageClient:
         self._secret_access_key = secret_access_key
         self._region = region
         self._force_path_style = force_path_style
-        self._s3_client = None
+        self._s3_client: Any | None = None
 
     @classmethod
     def from_config(cls, config: "WorkerConfig") -> "StorageClient":
@@ -134,7 +135,7 @@ class StorageClient:
         if parsed.scheme in {"s3", "minio"}:
             client = self._get_s3_client()
             bucket, key = self._bucket_key(uri)
-            kwargs = {"Bucket": bucket, "Key": key, "Body": payload}
+            kwargs: dict[str, Any] = {"Bucket": bucket, "Key": key, "Body": payload}
             if content_type:
                 kwargs["ContentType"] = content_type
             client.put_object(**kwargs)
@@ -159,35 +160,44 @@ class StorageClient:
 
     def list_uris(self, prefix_uri: str, *, suffix: str = "") -> list[str]:
         if _is_local_reference(prefix_uri):
-            root = self._local_path(prefix_uri)
-            if not root.exists():
-                return []
-            entries = [item for item in root.iterdir() if item.is_file()]
-            if suffix:
-                entries = [item for item in entries if item.name.endswith(suffix)]
-            return sorted(str(item) for item in entries)
+            return self._list_local_uris(prefix_uri, suffix)
 
         parsed = urlparse(prefix_uri)
         if parsed.scheme in {"s3", "minio"}:
-            client = self._get_s3_client()
-            bucket, prefix = self._bucket_key(prefix_uri)
-            entries: list[str] = []
-            continuation_token: str | None = None
-            while True:
-                kwargs = {"Bucket": bucket, "Prefix": prefix.rstrip("/") + "/"}
-                if continuation_token:
-                    kwargs["ContinuationToken"] = continuation_token
-                response = client.list_objects_v2(**kwargs)
-                for item in response.get("Contents", []):
-                    key = item["Key"]
-                    if key.endswith("/") or (suffix and not key.endswith(suffix)):
-                        continue
-                    entries.append(f"{parsed.scheme}://{bucket}/{key}")
-                if not response.get("IsTruncated"):
-                    break
-                continuation_token = response.get("NextContinuationToken")
-            return sorted(entries)
+            return self._list_s3_uris(parsed.scheme, prefix_uri, suffix)
         raise ValueError(f"listing is not supported for {prefix_uri}")
+
+    def _list_local_uris(self, prefix_uri: str, suffix: str) -> list[str]:
+        root = self._local_path(prefix_uri)
+        if not root.exists():
+            return []
+
+        local_entries: list[Path] = [item for item in root.iterdir() if item.is_file()]
+        if suffix:
+            local_entries = [item for item in local_entries if item.name.endswith(suffix)]
+        return sorted(str(item) for item in local_entries)
+
+    def _list_s3_uris(self, scheme: str, prefix_uri: str, suffix: str) -> list[str]:
+        client = self._get_s3_client()
+        bucket, prefix = self._bucket_key(prefix_uri)
+        entries: list[str] = []
+        continuation_token: str | None = None
+
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix.rstrip("/") + "/"}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+            response = client.list_objects_v2(**kwargs)
+            for item in response.get("Contents", []):
+                key = item["Key"]
+                if key.endswith("/") or (suffix and not key.endswith(suffix)):
+                    continue
+                entries.append(f"{scheme}://{bucket}/{key}")
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+
+        return sorted(entries)
 
     def _local_path(self, uri: str) -> Path:
         if uri.startswith("file://"):
@@ -202,21 +212,22 @@ class StorageClient:
         parsed = urlparse(uri)
         return parsed.netloc, parsed.path.lstrip("/")
 
-    def _get_s3_client(self):
+    def _get_s3_client(self) -> Any:
         if self._s3_client is not None:
             return self._s3_client
         try:
-            import boto3
+            boto3_module = cast(Any, importlib.import_module("boto3"))
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError("boto3 is required for s3:// and minio:// storage backends") from exc
 
-        session = boto3.session.Session()
-        config = None
+        session: Any = boto3_module.session.Session()
+        config: Any = None
         if self._force_path_style:
-            from botocore.config import Config as BotocoreConfig
+            botocore_config_module = cast(Any, importlib.import_module("botocore.config"))
+            botocore_config = botocore_config_module.Config
 
-            config = BotocoreConfig(s3={"addressing_style": "path"})
-        self._s3_client = session.client(
+            config = botocore_config(s3={"addressing_style": "path"})
+        client: Any = session.client(
             "s3",
             endpoint_url=self._endpoint_url,
             aws_access_key_id=self._access_key_id,
@@ -224,4 +235,5 @@ class StorageClient:
             region_name=self._region,
             config=config,
         )
-        return self._s3_client
+        self._s3_client = client
+        return client

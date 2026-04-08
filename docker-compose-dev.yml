@@ -110,8 +110,8 @@ services:
       WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
       WORKER_STORAGE_REGION: us-east-1
       WORKER_STORAGE_FORCE_PATH_STYLE: "true"
-      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
-      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
+      WORKER_OCR_COMMAND: '["python","scripts/backends/ocr_backend.py"]'
+      WORKER_INFERENCE_COMMAND: '["python","scripts/backends/inference_backend.py"]'
       WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
       WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
       WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
@@ -133,7 +133,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      test: ["CMD", "python", "scripts/ops/healthcheck.py", "ready"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -173,8 +173,8 @@ services:
       WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
       WORKER_STORAGE_REGION: us-east-1
       WORKER_STORAGE_FORCE_PATH_STYLE: "true"
-      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
-      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
+      WORKER_OCR_COMMAND: '["python","scripts/backends/ocr_backend.py"]'
+      WORKER_INFERENCE_COMMAND: '["python","scripts/backends/inference_backend.py"]'
       WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
       WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
       WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
@@ -196,7 +196,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      test: ["CMD", "python", "scripts/ops/healthcheck.py", "ready"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -236,8 +236,8 @@ services:
       WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
       WORKER_STORAGE_REGION: us-east-1
       WORKER_STORAGE_FORCE_PATH_STYLE: "true"
-      WORKER_OCR_COMMAND: '["python","scripts/ocr_backend.py"]'
-      WORKER_INFERENCE_COMMAND: '["python","scripts/inference_backend.py"]'
+      WORKER_OCR_COMMAND: '["python","scripts/backends/ocr_backend.py"]'
+      WORKER_INFERENCE_COMMAND: '["python","scripts/backends/inference_backend.py"]'
       WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
       WORKER_GRPC_SERVER_KEY_FILE: /run/secrets/worker_server_key
       WORKER_GRPC_SERVER_CLIENT_CA_FILE: /run/secrets/root_ca_cert
@@ -259,7 +259,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      test: ["CMD", "python", "scripts/ops/healthcheck.py", "ready"]
       interval: 15s
       timeout: 3s
       retries: 5

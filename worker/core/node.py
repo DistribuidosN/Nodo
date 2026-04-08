@@ -5,6 +5,7 @@ import contextlib
 import logging
 import time
 from datetime import UTC, datetime
+from typing import TypedDict
 
 from worker.config import WorkerConfig
 from worker.core.state_store import PendingTaskStore, StateStore
@@ -43,6 +44,24 @@ PROTO_STATUS = {
 }
 
 
+BackgroundTask = asyncio.Task[None]
+
+
+class SubmitReply(TypedDict):
+    accepted: bool
+    duplicate: bool
+    task_id: str
+    status: int
+    queue_position: int
+    reason: str
+
+
+class ControlReply(TypedDict):
+    accepted: bool
+    status: int
+    message: str
+
+
 class WorkerNode:
     def __init__(self, config: WorkerConfig, metrics: WorkerMetrics) -> None:
         self._config = config
@@ -56,9 +75,9 @@ class WorkerNode:
         self._mode = NodeMode.ACTIVE
         self._accepting_tasks = True
         self._stop_event = asyncio.Event()
-        self._scheduler_task: asyncio.Task | None = None
-        self._health_task: asyncio.Task | None = None
-        self._shutdown_task: asyncio.Task | None = None
+        self._scheduler_task: BackgroundTask | None = None
+        self._health_task: BackgroundTask | None = None
+        self._shutdown_task: BackgroundTask | None = None
         self._tasks: dict[str, Task] = {}
         self._results: dict[str, ExecutionResultRecord] = {}
         self._idempotency_index: dict[str, str] = {}
@@ -134,7 +153,7 @@ class WorkerNode:
         if self._config.health_port > 0:
             self._health_server.stop()
 
-    async def submit_task(self, task: Task) -> dict:
+    async def submit_task(self, task: Task) -> SubmitReply:
         async with self._task_lock:
             self._cleanup_completed_cache()
             if not self._accepting_tasks:
@@ -184,7 +203,7 @@ class WorkerNode:
         )
         return self._submit_reply(True, False, task.task_id, TaskState.QUEUED, position, "")
 
-    async def cancel_task(self, task_id: str, reason: str) -> dict:
+    async def cancel_task(self, task_id: str, reason: str) -> ControlReply:
         queued_task = await self._queue.remove(task_id)
         if queued_task is not None:
             queued_task.status = TaskState.CANCELLED
@@ -212,12 +231,12 @@ class WorkerNode:
             return {"accepted": True, "status": PROTO_STATUS[TaskState.CANCELLED], "message": "running task cancellation requested"}
         return {"accepted": False, "status": 0, "message": "task not found"}
 
-    def drain(self, reject_new_tasks: bool) -> dict:
+    def drain(self, reject_new_tasks: bool) -> ControlReply:
         self._mode = NodeMode.DRAINING
         self._accepting_tasks = not reject_new_tasks
-        return {"accepted": True, "message": "worker switched to draining mode"}
+        return {"accepted": True, "status": 0, "message": "worker switched to draining mode"}
 
-    def shutdown(self, grace_period_seconds: int) -> dict:
+    def shutdown(self, grace_period_seconds: int) -> ControlReply:
         self._mode = NodeMode.SHUTTING_DOWN
         self._accepting_tasks = False
 
@@ -228,7 +247,7 @@ class WorkerNode:
         if self._shutdown_task is not None and not self._shutdown_task.done():
             self._shutdown_task.cancel()
         self._shutdown_task = asyncio.create_task(_close_later(), name="worker-shutdown-delay")
-        return {"accepted": True, "message": "shutdown scheduled"}
+        return {"accepted": True, "status": 0, "message": "shutdown scheduled"}
 
     async def get_node_state(self) -> NodeState:
         queue_length = await self._queue.qsize()
@@ -529,7 +548,7 @@ class WorkerNode:
         state: TaskState,
         queue_position: int,
         reason: str,
-    ) -> dict:
+    ) -> SubmitReply:
         return {
             "accepted": accepted,
             "duplicate": duplicate,

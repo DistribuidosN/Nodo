@@ -45,8 +45,8 @@ services:
       WORKER_REQUIRE_SHARED_STORAGE: "false"
       
       # === IMAGE PROCESSING BACKENDS ===
-      WORKER_OCR_COMMAND: ${WORKER_OCR_COMMAND:-["python","scripts/ocr_backend.py"]}
-      WORKER_INFERENCE_COMMAND: ${WORKER_INFERENCE_COMMAND:-["python","scripts/inference_backend.py"]}
+      WORKER_OCR_COMMAND: ${WORKER_OCR_COMMAND:-["python","scripts/backends/ocr_backend.py"]}
+      WORKER_INFERENCE_COMMAND: ${WORKER_INFERENCE_COMMAND:-["python","scripts/backends/inference_backend.py"]}
       
       # === OPTIONAL: TLS Configuration ===
       # For production, use TLS. Set these to your certificate paths.
@@ -74,7 +74,7 @@ services:
       # - /etc/worker/certs:/etc/worker/certs:ro
     
     healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py", "ready"]
+      test: ["CMD", "python", "scripts/ops/healthcheck.py", "ready"]
       interval: 15s
       timeout: 3s
       retries: 5

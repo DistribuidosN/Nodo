@@ -71,20 +71,20 @@ class WorkerMetrics:
 
     def snapshot(self) -> dict[str, float]:
         return {
-            "queue_length": float(self.queue_length._value.get()),
-            "report_queue_length": float(self.report_queue_length._value.get()),
-            "success_total": float(self.success_total._value.get()),
-            "failure_total": float(self.failure_total._value.get()),
-            "retry_total": float(self.retry_total._value.get()),
-            "deadline_miss_total": float(self.deadline_miss_total._value.get()),
-            "tasks_rejected_total": float(self.tasks_rejected._value.get()),
-            "tasks_cancelled_total": float(self.tasks_cancelled._value.get()),
-            "cpu_utilization_ratio": float(self.cpu_utilization._value.get()),
-            "memory_utilization_ratio": float(self.memory_utilization._value.get()),
-            "gpu_utilization_ratio": float(self.gpu_utilization._value.get()),
-            "io_utilization_ratio": float(self.io_utilization._value.get()),
-            "active_tasks": float(self.active_tasks._value.get()),
-            "capacity_effective": float(self.capacity_effective._value.get()),
-            "coordinator_connected": float(self.coordinator_connected._value.get()),
-            "readiness": float(self.readiness._value.get()),
+            "queue_length": float(self.queue_length._value.get()),  # type: ignore[union-attr, attr-defined]
+            "report_queue_length": float(self.report_queue_length._value.get()),  # type: ignore[union-attr, attr-defined]
+            "success_total": float(self.success_total._value.get()),  # type: ignore[union-attr, attr-defined]
+            "failure_total": float(self.failure_total._value.get()),  # type: ignore[union-attr, attr-defined]
+            "retry_total": float(self.retry_total._value.get()),  # type: ignore[union-attr, attr-defined]
+            "deadline_miss_total": float(self.deadline_miss_total._value.get()),  # type: ignore[union-attr, attr-defined]
+            "tasks_rejected_total": float(self.tasks_rejected._value.get()),  # type: ignore[union-attr, attr-defined]
+            "tasks_cancelled_total": float(self.tasks_cancelled._value.get()),  # type: ignore[union-attr, attr-defined]
+            "cpu_utilization_ratio": float(self.cpu_utilization._value.get()),  # type: ignore[union-attr, attr-defined]
+            "memory_utilization_ratio": float(self.memory_utilization._value.get()),  # type: ignore[union-attr, attr-defined]
+            "gpu_utilization_ratio": float(self.gpu_utilization._value.get()),  # type: ignore[union-attr, attr-defined]
+            "io_utilization_ratio": float(self.io_utilization._value.get()),  # type: ignore[union-attr, attr-defined]
+            "active_tasks": float(self.active_tasks._value.get()),  # type: ignore[union-attr, attr-defined]
+            "capacity_effective": float(self.capacity_effective._value.get()),  # type: ignore[union-attr, attr-defined]
+            "coordinator_connected": float(self.coordinator_connected._value.get()),  # type: ignore[union-attr, attr-defined]
+            "readiness": float(self.readiness._value.get()),  # type: ignore[union-attr, attr-defined]
         }

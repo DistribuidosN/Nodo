@@ -9,7 +9,8 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Awaitable, Callable, Literal, Union, cast
+from multiprocessing.process import BaseProcess
 
 from worker.config import WorkerConfig
 from worker.core.storage import StorageClient
@@ -37,17 +38,15 @@ from worker.telemetry.tracing import copy_internal_trace_metadata, extract_conte
 def _process_entrypoint(
     task: Task,
     payload: bytes,
-    input_format: str | None,
     operation_name: str,
     params: dict[str, str],
     stage_output_format: str,
-    result_queue: multiprocessing.queues.Queue,
+    result_queue: multiprocessing.Queue[ChildResult],
 ) -> None:
     try:
         result = process_transform_stage(
             task=task,
             payload=payload,
-            input_format=input_format,
             operation=task.transforms[0].operation.__class__(operation_name),
             params=params,
             stage_output_format=stage_output_format,
@@ -63,15 +62,16 @@ def _process_entrypoint(
 class RunningTask:
     task: Task
     requirements: ResourceRequirements
-    future: asyncio.Future
+    future: asyncio.Future[tuple[str, str, int, int, int, dict[str, str]]]
     started_at: datetime
     started_at_monotonic: float
     queue_wait_ms: int
     cancel_token_path: str | None
     executor_kind: ExecutorKind
-    process: multiprocessing.Process | None = None
-    process_queue: multiprocessing.queues.Queue | None = None
-    cancel_task: asyncio.Task | None = None
+    process: BaseProcess | None = None
+    process_queue: multiprocessing.Queue[ChildResult] | None = None
+    cancel_task: asyncio.Task[None] | None = None
+    watch_task: asyncio.Task[None] | None = None
     cancel_requested: bool = False
 
 
@@ -81,10 +81,10 @@ class ExecutionManager:
         config: WorkerConfig,
         metrics: WorkerMetrics,
         estimator: ServiceTimeEstimator,
-        emit_progress,
-        handle_result,
-        handle_failure,
-        release_resources,
+        emit_progress: Callable[[ProgressEventRecord], Awaitable[None]],
+        handle_result: Callable[[Task, ExecutionResultRecord, int, int], Awaitable[None]],
+        handle_failure: Callable[[Task, str, str], Awaitable[None]],
+        release_resources: Callable[[str], Awaitable[None]],
         storage: StorageClient | None = None,
     ) -> None:
         self._config = config
@@ -141,7 +141,7 @@ class ExecutionManager:
             )
         )
 
-        running = await self._start_running_task(task, requirements, queue_wait_ms, executor_kind)
+        running = self._start_running_task(task, requirements, queue_wait_ms, executor_kind)
         async with self._lock:
             self._active[task.task_id] = running
             self._metrics.active_tasks.set(len(self._active))
@@ -160,7 +160,7 @@ class ExecutionManager:
                 metadata=self._trace_metadata(task),
             )
         )
-        asyncio.create_task(self._watch_task(running))
+        running.watch_task = asyncio.create_task(self._watch_task(running))
 
     async def cancel(self, task_id: str) -> bool:
         async with self._lock:
@@ -179,14 +179,18 @@ class ExecutionManager:
         return True
 
     async def shutdown(self) -> None:
-        await self.wait_for_idle(timeout=5.0)
+        try:
+            async with asyncio.timeout(5.0):
+                await self.wait_for_idle()
+        except TimeoutError:
+            pass
         self._thread_pool.shutdown(wait=True, cancel_futures=True)
 
     @property
     def active_count(self) -> int:
         return len(self._active)
 
-    async def wait_for_idle(self, timeout: float | None = None) -> None:
+    async def wait_for_idle(self) -> None:
         async def _await_all() -> None:
             while True:
                 async with self._lock:
@@ -195,13 +199,7 @@ class ExecutionManager:
                     return
                 await asyncio.gather(*active, return_exceptions=True)
 
-        if timeout is None:
-            await _await_all()
-            return
-        try:
-            await asyncio.wait_for(_await_all(), timeout=timeout)
-        except TimeoutError:
-            return
+        await _await_all()
 
     def _pick_executor(self, task: Task) -> ExecutorKind:
         if task.metadata.get("execution_isolation") == "process":
@@ -211,10 +209,10 @@ class ExecutionManager:
             return ExecutorKind.DEDICATED_PROCESS
         return ExecutorKind.THREAD
 
-    def _executor_for(self, kind: ExecutorKind) -> Executor:
+    def _executor_for(self) -> Executor:
         return self._thread_pool
 
-    async def _start_running_task(
+    def _start_running_task(
         self,
         task: Task,
         requirements: ResourceRequirements,
@@ -236,7 +234,7 @@ class ExecutionManager:
             )
 
         future = loop.run_in_executor(
-            self._executor_for(executor_kind),
+            self._executor_for(),
             process_image,
             task,
             str(self._config.output_dir),
@@ -256,30 +254,16 @@ class ExecutionManager:
 
     async def _await_process_result(
         self,
-        process: multiprocessing.Process,
-        result_queue: multiprocessing.queues.Queue,
+        process: BaseProcess,
+        result_queue: multiprocessing.Queue[ChildResult],
     ) -> tuple[bytes, str, int, int, dict[str, str]]:
         try:
             while True:
-                try:
-                    item = result_queue.get_nowait()
-                except queue.Empty:
-                    if not process.is_alive():
-                        exitcode = process.exitcode
-                        if exitcode == 0:
-                            raise RuntimeError("dedicated process exited without returning a result")
-                        raise TaskCancelledError(f"dedicated process exited with code {exitcode}")
+                item = _poll_child_result(process, result_queue)
+                if item is None:
                     await asyncio.sleep(0.05)
                     continue
-
-                status = item[0]
-                if status == "ok":
-                    return item[1]
-                if status == "cancelled":
-                    raise TaskCancelledError(item[1])
-                if status == "error":
-                    raise RuntimeError(f"{item[1]}: {item[2]}")
-                raise RuntimeError(f"unknown child process result status: {status}")
+                return _handle_child_result(item)
         finally:
             await asyncio.to_thread(process.join, self._config.process_kill_timeout_seconds)
             result_queue.close()
@@ -311,13 +295,12 @@ class ExecutionManager:
             if is_last:
                 stage_output_format = (task.output_format or current_format or "png").lower()
 
-            result_queue = self._mp_context.Queue(maxsize=1)
-            process = self._mp_context.Process(
+            result_queue: multiprocessing.Queue[ChildResult] = self._mp_context.Queue(maxsize=1)
+            process: BaseProcess = self._mp_context.Process(
                 target=_process_entrypoint,
                 args=(
                     task,
                     payload,
-                    current_format,
                     transform.operation.value,
                     dict(transform.params),
                     stage_output_format,
@@ -348,7 +331,7 @@ class ExecutionManager:
         )
         return str(output_path), current_format, width, height, size_bytes, metadata
 
-    async def _terminate_process(self, process: multiprocessing.Process) -> None:
+    async def _terminate_process(self, process: BaseProcess) -> None:
         if not process.is_alive():
             return
         process.terminate()
@@ -406,9 +389,10 @@ class ExecutionManager:
                 await self._handle_result(task, result, running.queue_wait_ms, run_time_ms)
         except asyncio.CancelledError:
             await self._handle_result(task, self._cancelled_result(task, running), running.queue_wait_ms, 0)
+            raise
         except TaskCancelledError:
             run_time_ms = int((time.monotonic() - running.started_at_monotonic) * 1000)
-            await self._cleanup_partial_outputs(task)
+            self._cleanup_partial_outputs(task)
             await self._handle_result(task, self._cancelled_result(task, running), running.queue_wait_ms, run_time_ms)
         except Exception as exc:  # pragma: no cover
             self._logger.exception("task execution failed", extra={"task_id": task.task_id})
@@ -426,7 +410,7 @@ class ExecutionManager:
             await self._release_resources(task.task_id)
             self._semaphore.release()
 
-    async def _cleanup_partial_outputs(self, task: Task) -> None:
+    def _cleanup_partial_outputs(self, task: Task) -> None:
         for path in self._config.output_dir.glob(f"{task.task_id}.*"):
             path.unlink(missing_ok=True)
 
@@ -453,3 +437,36 @@ class ExecutionManager:
         metadata: dict[str, str] = {}
         copy_internal_trace_metadata(task.metadata, metadata)
         return metadata
+
+
+ChildOk = tuple[Literal["ok"], tuple[bytes, str, int, int, dict[str, str]]]
+ChildCancelled = tuple[Literal["cancelled"], str]
+ChildError = tuple[Literal["error"], str, str]
+ChildResult = Union[ChildOk, ChildCancelled, ChildError]
+
+def _poll_child_result(
+    process: BaseProcess,
+    result_queue: multiprocessing.Queue[ChildResult],
+) -> ChildResult | None:
+    try:
+        return result_queue.get_nowait()
+    except queue.Empty:
+        if not process.is_alive():
+            exitcode = process.exitcode
+            if exitcode == 0:
+                raise RuntimeError("dedicated process exited without returning a result")
+            raise TaskCancelledError(f"dedicated process exited with code {exitcode}")
+        return None
+
+
+def _handle_child_result(item: ChildResult) -> tuple[bytes, str, int, int, dict[str, str]]:
+    status = item[0]
+    if status == "ok":
+        return cast(tuple[bytes, str, int, int, dict[str, str]], item[1])
+    if status == "cancelled":
+        cancelled = cast(ChildCancelled, item)
+        raise TaskCancelledError(cancelled[1])
+    if status == "error":
+        err = cast(ChildError, item)
+        raise RuntimeError(f"{err[1]}: {err[2]}")
+    raise RuntimeError(f"unknown child process result status: {status}")

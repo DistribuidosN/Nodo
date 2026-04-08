@@ -57,6 +57,16 @@ worker/
   scheduler/
   telemetry/
 proto/
+docs/
+  api/
+  demo/
+  reference/
+  reports/
+scripts/
+  backends/
+  demo/
+  dev/
+  ops/
 examples/
 tests/
 ```
@@ -113,7 +123,7 @@ Este modo levanta:
 Uso:
 
 ```powershell
-python scripts/generate_dev_security_assets.py
+python scripts/dev/generate_dev_security_assets.py
 docker compose -f docker-compose-dev.yml up -d --build
 docker compose -f docker-compose-dev.yml ps
 ```
@@ -228,11 +238,17 @@ principal.
 
 ## Scripts utiles
 
-- [scripts/demo_end_to_end.py](scripts/demo_end_to_end.py)
-- [scripts/generate_dev_security_assets.py](scripts/generate_dev_security_assets.py)
-- [scripts/healthcheck.py](scripts/healthcheck.py)
-- [scripts/ocr_backend.py](scripts/ocr_backend.py)
-- [scripts/inference_backend.py](scripts/inference_backend.py)
+- [scripts/demo/demo_end_to_end.py](scripts/demo/demo_end_to_end.py)
+- [scripts/dev/generate_dev_security_assets.py](scripts/dev/generate_dev_security_assets.py)
+- [scripts/ops/healthcheck.py](scripts/ops/healthcheck.py)
+- [scripts/backends/ocr_backend.py](scripts/backends/ocr_backend.py)
+- [scripts/backends/inference_backend.py](scripts/backends/inference_backend.py)
+
+## Documentacion y soporte
+
+- [docs/README.md](docs/README.md)
+- [scripts/README.md](scripts/README.md)
+- [examples/README.md](examples/README.md)
 
 ## Comandos rapidos con PowerShell
 

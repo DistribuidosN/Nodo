@@ -29,6 +29,6 @@ USER appuser
 EXPOSE 50051 8081 9100
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-  CMD python scripts/healthcheck.py ready
+CMD python scripts/ops/healthcheck.py ready
 
 CMD ["python", "-m", "worker.server"]

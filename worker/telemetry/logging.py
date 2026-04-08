@@ -9,7 +9,7 @@ from worker.telemetry.tracing import current_trace_ids
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        payload = {
+        payload: dict[str, str | int | None] = {
             "timestamp": datetime.now(tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
@@ -21,10 +21,10 @@ class JsonFormatter(logging.Formatter):
                 payload[field_name] = value
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
-        payload.update(current_trace_ids())
+        payload.update(current_trace_ids())  # type: ignore[arg-type]
         extra = getattr(record, "extra_data", None)
         if isinstance(extra, dict):
-            payload.update(extra)
+            payload.update(extra)  # type: ignore[arg-type]
         return json.dumps(payload, ensure_ascii=True)
 
 

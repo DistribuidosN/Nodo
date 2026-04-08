@@ -27,8 +27,8 @@ async def run_worker_server() -> None:
     await node.start()
 
     server = grpc.aio.server()
-    worker_node_pb2_grpc.add_WorkerControlServiceServicer_to_server(WorkerControlServicer(node), server)
-    imagenode_pb2_grpc.add_ImageNodeServiceServicer_to_server(
+    worker_node_pb2_grpc.add_WorkerControlServiceServicer_to_server(WorkerControlServicer(node), server)  # type: ignore[attr-defined]
+    imagenode_pb2_grpc.add_ImageNodeServiceServicer_to_server(  # type: ignore[attr-defined]
         ImageNodeBusinessServicer(node=node, metrics=metrics, stream_concurrency=config.max_active_tasks),
         server,
     )

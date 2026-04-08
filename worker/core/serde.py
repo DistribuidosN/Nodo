@@ -75,37 +75,39 @@ def task_to_dict(task: Task) -> dict[str, Any]:
 
 def task_from_dict(payload: dict[str, Any]) -> Task:
     image = payload["input_image"]
-    return Task(
-        task_id=payload["task_id"],
-        idempotency_key=payload["idempotency_key"],
-        priority=int(payload["priority"]),
-        created_at=_str_to_dt(payload["created_at"]) or datetime.now(tz=UTC),
-        deadline=_str_to_dt(payload.get("deadline")),
-        max_retries=int(payload["max_retries"]),
-        transforms=[
+    input_image_payload: dict[str, Any] = {
+        "image_id": image["image_id"],
+        "input_path": image.get("input_path"),
+        "input_uri": image.get("input_uri"),
+        "payload": _str_to_bytes(image.get("payload")),
+        "image_format": image.get("image_format"),
+        "size_bytes": int(image.get("size_bytes", 0)),
+        "width": int(image.get("width", 0)),
+        "height": int(image.get("height", 0)),
+    }
+    task_payload: dict[str, Any] = {
+        "task_id": payload["task_id"],
+        "idempotency_key": payload["idempotency_key"],
+        "priority": int(payload["priority"]),
+        "created_at": _str_to_dt(payload["created_at"]) or datetime.now(tz=UTC),
+        "deadline": _str_to_dt(payload.get("deadline")),
+        "max_retries": int(payload["max_retries"]),
+        "transforms": [
             TransformationSpec(operation=OperationType(item["operation"]), params=dict(item.get("params", {})))
             for item in payload.get("transforms", [])
         ],
-        input_image=InputImageRef(
-            image_id=image["image_id"],
-            input_path=image.get("input_path"),
-            input_uri=image.get("input_uri"),
-            payload=_str_to_bytes(image.get("payload")),
-            image_format=image.get("image_format"),
-            size_bytes=int(image.get("size_bytes", 0)),
-            width=int(image.get("width", 0)),
-            height=int(image.get("height", 0)),
-        ),
-        output_format=payload.get("output_format"),
-        metadata=dict(payload.get("metadata", {})),
-        attempt=int(payload.get("attempt", 0)),
-        status=TaskState(payload.get("status", TaskState.QUEUED.value)),
-        estimated_service_ms=float(payload.get("estimated_service_ms", 0.0)),
-        estimated_cost=float(payload.get("estimated_cost", 0.0)),
-        last_error=payload.get("last_error"),
-        next_eligible_at_monotonic=float(payload.get("next_eligible_at_monotonic", 0.0)),
-        cancel_token_path=payload.get("cancel_token_path"),
-    )
+        "input_image": InputImageRef(**input_image_payload),
+        "output_format": payload.get("output_format"),
+        "metadata": dict(payload.get("metadata", {})),
+        "attempt": int(payload.get("attempt", 0)),
+        "status": TaskState(payload.get("status", TaskState.QUEUED.value)),
+        "estimated_service_ms": float(payload.get("estimated_service_ms", 0.0)),
+        "estimated_cost": float(payload.get("estimated_cost", 0.0)),
+        "last_error": payload.get("last_error"),
+        "next_eligible_at_monotonic": float(payload.get("next_eligible_at_monotonic", 0.0)),
+        "cancel_token_path": payload.get("cancel_token_path"),
+    }
+    return Task(**task_payload)
 
 
 def progress_to_dict(event: ProgressEventRecord) -> dict[str, Any]:
@@ -125,19 +127,20 @@ def progress_to_dict(event: ProgressEventRecord) -> dict[str, Any]:
 
 
 def progress_from_dict(payload: dict[str, Any]) -> ProgressEventRecord:
-    return ProgressEventRecord(
-        task_id=payload["task_id"],
-        image_id=payload["image_id"],
-        node_id=payload["node_id"],
-        state=TaskState(payload["state"]),
-        progress_pct=int(payload["progress_pct"]),
-        attempt=int(payload["attempt"]),
-        queue_wait_ms=int(payload["queue_wait_ms"]),
-        run_time_ms=int(payload["run_time_ms"]),
-        message=payload["message"],
-        metadata=dict(payload.get("metadata", {})),
-        timestamp=_str_to_dt(payload.get("timestamp")) or datetime.now(tz=UTC),
-    )
+    progress_payload: dict[str, Any] = {
+        "task_id": payload["task_id"],
+        "image_id": payload["image_id"],
+        "node_id": payload["node_id"],
+        "state": TaskState(payload["state"]),
+        "progress_pct": int(payload["progress_pct"]),
+        "attempt": int(payload["attempt"]),
+        "queue_wait_ms": int(payload["queue_wait_ms"]),
+        "run_time_ms": int(payload["run_time_ms"]),
+        "message": payload["message"],
+        "metadata": dict(payload.get("metadata", {})),
+        "timestamp": _str_to_dt(payload.get("timestamp")) or datetime.now(tz=UTC),
+    }
+    return ProgressEventRecord(**progress_payload)
 
 
 def result_to_dict(result: ExecutionResultRecord) -> dict[str, Any]:
@@ -161,20 +164,21 @@ def result_to_dict(result: ExecutionResultRecord) -> dict[str, Any]:
 
 
 def result_from_dict(payload: dict[str, Any]) -> ExecutionResultRecord:
-    return ExecutionResultRecord(
-        task_id=payload["task_id"],
-        image_id=payload["image_id"],
-        node_id=payload["node_id"],
-        state=TaskState(payload["state"]),
-        attempt=int(payload["attempt"]),
-        output_path=payload.get("output_path"),
-        output_format=payload.get("output_format"),
-        width=int(payload.get("width", 0)),
-        height=int(payload.get("height", 0)),
-        size_bytes=int(payload.get("size_bytes", 0)),
-        error_code=payload.get("error_code"),
-        error_message=payload.get("error_message"),
-        metadata=dict(payload.get("metadata", {})),
-        started_at=_str_to_dt(payload.get("started_at")),
-        finished_at=_str_to_dt(payload.get("finished_at")),
-    )
+    result_payload: dict[str, Any] = {
+        "task_id": payload["task_id"],
+        "image_id": payload["image_id"],
+        "node_id": payload["node_id"],
+        "state": TaskState(payload["state"]),
+        "attempt": int(payload["attempt"]),
+        "output_path": payload.get("output_path"),
+        "output_format": payload.get("output_format"),
+        "width": int(payload.get("width", 0)),
+        "height": int(payload.get("height", 0)),
+        "size_bytes": int(payload.get("size_bytes", 0)),
+        "error_code": payload.get("error_code"),
+        "error_message": payload.get("error_message"),
+        "metadata": dict(payload.get("metadata", {})),
+        "started_at": _str_to_dt(payload.get("started_at")),
+        "finished_at": _str_to_dt(payload.get("finished_at")),
+    }
+    return ExecutionResultRecord(**result_payload)

@@ -5,6 +5,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 import grpc
 
@@ -16,10 +17,16 @@ from worker.grpc.mappers import node_status_to_proto, progress_to_proto, result_
 from worker.grpc.security import build_channel_credentials
 from worker.models.types import ExecutionResultRecord, NodeState, ProgressEventRecord
 from worker.telemetry.metrics import WorkerMetrics
-from worker.telemetry.tracing import grpc_metadata_from_internal, inject_current_context, maybe_span
+from worker.telemetry import tracing as _tracing_helpers
+from worker.telemetry.tracing import grpc_metadata_from_internal, inject_current_context
 
 
 StatusProvider = Callable[[], Awaitable[NodeState]]
+BackgroundTask = asyncio.Task[None]
+PROTO = cast(Any, worker_node_pb2)
+PROTO_GRPC = cast(Any, worker_node_pb2_grpc)
+TRACING_HELPERS = cast(Any, _tracing_helpers)
+MAYBE_SPAN = TRACING_HELPERS.maybe_span
 
 
 class CoordinatorReporter:
@@ -40,8 +47,8 @@ class CoordinatorReporter:
         )
         self._stop_event = asyncio.Event()
         self._channel: grpc.aio.Channel | None = None
-        self._stub: worker_node_pb2_grpc.CoordinatorCallbackServiceStub | None = None
-        self._tasks: list[asyncio.Task] = []
+        self._stub: Any | None = None
+        self._tasks: list[BackgroundTask] = []
         self._failure_count = 0
         self._connected = False
         self._channel_lock = asyncio.Lock()
@@ -127,11 +134,13 @@ class CoordinatorReporter:
         stub = await self._ensure_stub()
         started = time.perf_counter()
         metadata = grpc_metadata_from_internal(payload.metadata)
-        with maybe_span(f"worker.callback.{kind}", attributes={"worker.callback.kind": kind}):
+        with MAYBE_SPAN(f"worker.callback.{kind}", attributes={"worker.callback.kind": kind}):
             if kind == "progress":
-                await stub.ReportProgress(progress_to_proto(payload), wait_for_ready=True, metadata=metadata)
+                progress_payload = cast(ProgressEventRecord, payload)
+                await stub.ReportProgress(progress_to_proto(progress_payload), wait_for_ready=True, metadata=metadata)
             else:
-                await stub.ReportResult(result_to_proto(payload), wait_for_ready=True, metadata=metadata)
+                result_payload = cast(ExecutionResultRecord, payload)
+                await stub.ReportResult(result_to_proto(result_payload), wait_for_ready=True, metadata=metadata)
         self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
         self._mark_success()
 
@@ -141,9 +150,9 @@ class CoordinatorReporter:
                 status = await self._status_provider()
                 stub = await self._ensure_stub()
                 started = time.perf_counter()
-                with maybe_span("worker.callback.heartbeat", attributes={"worker.callback.kind": "heartbeat"}):
+                with MAYBE_SPAN("worker.callback.heartbeat", attributes={"worker.callback.kind": "heartbeat"}):
                     await stub.Heartbeat(
-                        worker_node_pb2.HeartbeatRequest(status=node_status_to_proto(status)),
+                        PROTO.HeartbeatRequest(status=node_status_to_proto(status)),
                         wait_for_ready=True,
                     )
                 self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
@@ -155,9 +164,12 @@ class CoordinatorReporter:
 
     async def _connect(self) -> None:
         async with self._channel_lock:
+            target = self._config.coordinator_target
+            if target is None:
+                raise RuntimeError("coordinator target is required when reporter is enabled")
             if self._channel is not None:
                 await self._channel.close()
-            options = [
+            options: list[tuple[str, int | str]] = [
                 ("grpc.keepalive_time_ms", 10_000),
                 ("grpc.keepalive_timeout_ms", 5_000),
                 ("grpc.keepalive_permit_without_calls", 1),
@@ -171,19 +183,19 @@ class CoordinatorReporter:
                 private_key_file=self._config.coordinator_client_key_file,
             )
             if channel_credentials is None:
-                self._channel = grpc.aio.insecure_channel(self._config.coordinator_target, options=options)
+                self._channel = grpc.aio.insecure_channel(target, options=options)
             else:
                 self._channel = grpc.aio.secure_channel(
-                    self._config.coordinator_target,
+                    target,
                     channel_credentials,
                     options=options,
                 )
-            self._stub = worker_node_pb2_grpc.CoordinatorCallbackServiceStub(self._channel)
+            self._stub = PROTO_GRPC.CoordinatorCallbackServiceStub(self._channel)
 
-    async def _ensure_stub(self) -> worker_node_pb2_grpc.CoordinatorCallbackServiceStub:
+    async def _ensure_stub(self) -> Any:
         if self._stub is None:
             await self._connect()
-        return self._stub  # type: ignore[return-value]
+        return self._stub
 
     def _mark_success(self) -> None:
         self._failure_count = 0

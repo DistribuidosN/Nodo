@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -19,58 +20,61 @@ from worker.models.types import (
 )
 
 
-TASK_STATUS_TO_PROTO = {
-    TaskState.QUEUED: worker_node_pb2.TASK_STATUS_QUEUED,
-    TaskState.ADMITTED: worker_node_pb2.TASK_STATUS_ADMITTED,
-    TaskState.RUNNING: worker_node_pb2.TASK_STATUS_RUNNING,
-    TaskState.RETRY_SCHEDULED: worker_node_pb2.TASK_STATUS_RETRY_SCHEDULED,
-    TaskState.SUCCEEDED: worker_node_pb2.TASK_STATUS_SUCCEEDED,
-    TaskState.FAILED: worker_node_pb2.TASK_STATUS_FAILED,
-    TaskState.CANCELLED: worker_node_pb2.TASK_STATUS_CANCELLED,
-    TaskState.REJECTED: worker_node_pb2.TASK_STATUS_REJECTED,
+PROTO = cast(Any, worker_node_pb2)
+
+
+TASK_STATUS_TO_PROTO: dict[TaskState, int] = {
+    TaskState.QUEUED: PROTO.TASK_STATUS_QUEUED,
+    TaskState.ADMITTED: PROTO.TASK_STATUS_ADMITTED,
+    TaskState.RUNNING: PROTO.TASK_STATUS_RUNNING,
+    TaskState.RETRY_SCHEDULED: PROTO.TASK_STATUS_RETRY_SCHEDULED,
+    TaskState.SUCCEEDED: PROTO.TASK_STATUS_SUCCEEDED,
+    TaskState.FAILED: PROTO.TASK_STATUS_FAILED,
+    TaskState.CANCELLED: PROTO.TASK_STATUS_CANCELLED,
+    TaskState.REJECTED: PROTO.TASK_STATUS_REJECTED,
 }
 
-NODE_MODE_TO_PROTO = {
-    NodeMode.ACTIVE: worker_node_pb2.NODE_MODE_ACTIVE,
-    NodeMode.DRAINING: worker_node_pb2.NODE_MODE_DRAINING,
-    NodeMode.SHUTTING_DOWN: worker_node_pb2.NODE_MODE_SHUTTING_DOWN,
+NODE_MODE_TO_PROTO: dict[NodeMode, int] = {
+    NodeMode.ACTIVE: PROTO.NODE_MODE_ACTIVE,
+    NodeMode.DRAINING: PROTO.NODE_MODE_DRAINING,
+    NodeMode.SHUTTING_DOWN: PROTO.NODE_MODE_SHUTTING_DOWN,
 }
 
-IMAGE_FORMAT_FROM_PROTO = {
-    worker_node_pb2.IMAGE_FORMAT_JPG: "jpg",
-    worker_node_pb2.IMAGE_FORMAT_PNG: "png",
-    worker_node_pb2.IMAGE_FORMAT_TIF: "tif",
-    worker_node_pb2.IMAGE_FORMAT_WEBP: "webp",
-    worker_node_pb2.IMAGE_FORMAT_BMP: "bmp",
-    worker_node_pb2.IMAGE_FORMAT_GIF: "gif",
-    worker_node_pb2.IMAGE_FORMAT_ICO: "ico",
+IMAGE_FORMAT_FROM_PROTO: dict[int, str] = {
+    PROTO.IMAGE_FORMAT_JPG: "jpg",
+    PROTO.IMAGE_FORMAT_PNG: "png",
+    PROTO.IMAGE_FORMAT_TIF: "tif",
+    PROTO.IMAGE_FORMAT_WEBP: "webp",
+    PROTO.IMAGE_FORMAT_BMP: "bmp",
+    PROTO.IMAGE_FORMAT_GIF: "gif",
+    PROTO.IMAGE_FORMAT_ICO: "ico",
 }
 
-IMAGE_FORMAT_TO_PROTO = {
-    "jpg": worker_node_pb2.IMAGE_FORMAT_JPG,
-    "jpeg": worker_node_pb2.IMAGE_FORMAT_JPG,
-    "png": worker_node_pb2.IMAGE_FORMAT_PNG,
-    "tif": worker_node_pb2.IMAGE_FORMAT_TIF,
-    "tiff": worker_node_pb2.IMAGE_FORMAT_TIF,
-    "webp": worker_node_pb2.IMAGE_FORMAT_WEBP,
-    "bmp": worker_node_pb2.IMAGE_FORMAT_BMP,
-    "gif": worker_node_pb2.IMAGE_FORMAT_GIF,
-    "ico": worker_node_pb2.IMAGE_FORMAT_ICO,
+IMAGE_FORMAT_TO_PROTO: dict[str, int] = {
+    "jpg": PROTO.IMAGE_FORMAT_JPG,
+    "jpeg": PROTO.IMAGE_FORMAT_JPG,
+    "png": PROTO.IMAGE_FORMAT_PNG,
+    "tif": PROTO.IMAGE_FORMAT_TIF,
+    "tiff": PROTO.IMAGE_FORMAT_TIF,
+    "webp": PROTO.IMAGE_FORMAT_WEBP,
+    "bmp": PROTO.IMAGE_FORMAT_BMP,
+    "gif": PROTO.IMAGE_FORMAT_GIF,
+    "ico": PROTO.IMAGE_FORMAT_ICO,
 }
 
-OPERATION_FROM_PROTO = {
-    worker_node_pb2.OPERATION_GRAYSCALE: OperationType.GRAYSCALE,
-    worker_node_pb2.OPERATION_RESIZE: OperationType.RESIZE,
-    worker_node_pb2.OPERATION_CROP: OperationType.CROP,
-    worker_node_pb2.OPERATION_ROTATE: OperationType.ROTATE,
-    worker_node_pb2.OPERATION_FLIP: OperationType.FLIP,
-    worker_node_pb2.OPERATION_BLUR: OperationType.BLUR,
-    worker_node_pb2.OPERATION_SHARPEN: OperationType.SHARPEN,
-    worker_node_pb2.OPERATION_BRIGHTNESS_CONTRAST: OperationType.BRIGHTNESS_CONTRAST,
-    worker_node_pb2.OPERATION_WATERMARK_TEXT: OperationType.WATERMARK_TEXT,
-    worker_node_pb2.OPERATION_FORMAT_CONVERSION: OperationType.FORMAT_CONVERSION,
-    worker_node_pb2.OPERATION_OCR: OperationType.OCR,
-    worker_node_pb2.OPERATION_INFERENCE: OperationType.INFERENCE,
+OPERATION_FROM_PROTO: dict[int, OperationType] = {
+    PROTO.OPERATION_GRAYSCALE: OperationType.GRAYSCALE,
+    PROTO.OPERATION_RESIZE: OperationType.RESIZE,
+    PROTO.OPERATION_CROP: OperationType.CROP,
+    PROTO.OPERATION_ROTATE: OperationType.ROTATE,
+    PROTO.OPERATION_FLIP: OperationType.FLIP,
+    PROTO.OPERATION_BLUR: OperationType.BLUR,
+    PROTO.OPERATION_SHARPEN: OperationType.SHARPEN,
+    PROTO.OPERATION_BRIGHTNESS_CONTRAST: OperationType.BRIGHTNESS_CONTRAST,
+    PROTO.OPERATION_WATERMARK_TEXT: OperationType.WATERMARK_TEXT,
+    PROTO.OPERATION_FORMAT_CONVERSION: OperationType.FORMAT_CONVERSION,
+    PROTO.OPERATION_OCR: OperationType.OCR,
+    PROTO.OPERATION_INFERENCE: OperationType.INFERENCE,
 }
 
 
@@ -87,37 +91,43 @@ def datetime_from_timestamp(value: Timestamp) -> datetime | None:
     return value.ToDatetime(tzinfo=UTC)
 
 
-def task_from_proto(message: worker_node_pb2.Task) -> Task:
-    source = message.input.WhichOneof("source")
+def task_from_proto(message: Any) -> Task:
+    proto_input = message.input
+    source = cast(str | None, proto_input.WhichOneof("source"))
     image = InputImageRef(
-        image_id=message.input.image_id,
-        input_path=message.input.input_path if source == "input_path" else None,
-        input_uri=message.input.input_uri if source == "input_uri" else None,
-        payload=message.input.content if source == "content" else None,
-        image_format=IMAGE_FORMAT_FROM_PROTO.get(message.input.format, "png"),
-        size_bytes=message.input.size_bytes,
-        width=message.input.width,
-        height=message.input.height,
+        image_id=str(proto_input.image_id),
+        input_path=str(proto_input.input_path) if source == "input_path" else None,
+        input_uri=str(proto_input.input_uri) if source == "input_uri" else None,
+        payload=bytes(proto_input.content) if source == "content" else None,
+        image_format=IMAGE_FORMAT_FROM_PROTO.get(int(proto_input.format), "png"),
+        size_bytes=int(proto_input.size_bytes),
+        width=int(proto_input.width),
+        height=int(proto_input.height),
     )
-    return Task(
-        task_id=message.task_id,
-        idempotency_key=message.idempotency_key or message.task_id,
-        priority=message.priority,
-        created_at=datetime_from_timestamp(message.created_at) or datetime.now(tz=UTC),
-        deadline=datetime_from_timestamp(message.deadline),
-        max_retries=message.max_retries,
-        transforms=[
-            TransformationSpec(operation=OPERATION_FROM_PROTO[item.type], params=dict(item.params))
-            for item in message.transforms
-        ],
-        input_image=image,
-        output_format=IMAGE_FORMAT_FROM_PROTO.get(message.output_format, image.image_format or "png"),
-        metadata=dict(message.metadata),
-    )
+    transforms: list[TransformationSpec] = [
+        TransformationSpec(
+            operation=OPERATION_FROM_PROTO[int(item.type)],
+            params=dict(cast(dict[str, str], item.params)),
+        )
+        for item in message.transforms
+    ]
+    task_payload: dict[str, Any] = {
+        "task_id": str(message.task_id),
+        "idempotency_key": str(message.idempotency_key or message.task_id),
+        "priority": int(message.priority),
+        "created_at": datetime_from_timestamp(cast(Timestamp, message.created_at)) or datetime.now(tz=UTC),
+        "deadline": datetime_from_timestamp(cast(Timestamp, message.deadline)),
+        "max_retries": int(message.max_retries),
+        "transforms": transforms,
+        "input_image": image,
+        "output_format": IMAGE_FORMAT_FROM_PROTO.get(int(message.output_format), image.image_format or "png"),
+        "metadata": dict(cast(dict[str, str], message.metadata)),
+    }
+    return Task(**task_payload)
 
 
-def progress_to_proto(event: ProgressEventRecord) -> worker_node_pb2.ProgressEvent:
-    return worker_node_pb2.ProgressEvent(
+def progress_to_proto(event: ProgressEventRecord) -> Any:
+    return PROTO.ProgressEvent(
         task_id=event.task_id,
         image_id=event.image_id,
         node_id=event.node_id,
@@ -132,15 +142,15 @@ def progress_to_proto(event: ProgressEventRecord) -> worker_node_pb2.ProgressEve
     )
 
 
-def result_to_proto(result: ExecutionResultRecord) -> worker_node_pb2.ExecutionResult:
-    return worker_node_pb2.ExecutionResult(
+def result_to_proto(result: ExecutionResultRecord) -> Any:
+    return PROTO.ExecutionResult(
         task_id=result.task_id,
         image_id=result.image_id,
         node_id=result.node_id,
         status=TASK_STATUS_TO_PROTO[result.state],
         attempt=result.attempt,
         output_path=result.output_path or "",
-        output_format=IMAGE_FORMAT_TO_PROTO.get((result.output_format or "png").lower(), worker_node_pb2.IMAGE_FORMAT_PNG),
+        output_format=IMAGE_FORMAT_TO_PROTO.get((result.output_format or "png").lower(), PROTO.IMAGE_FORMAT_PNG),
         width=result.width,
         height=result.height,
         size_bytes=result.size_bytes,
@@ -152,8 +162,8 @@ def result_to_proto(result: ExecutionResultRecord) -> worker_node_pb2.ExecutionR
     )
 
 
-def node_status_to_proto(state: NodeState) -> worker_node_pb2.NodeStatus:
-    return worker_node_pb2.NodeStatus(
+def node_status_to_proto(state: NodeState) -> Any:
+    return PROTO.NodeStatus(
         node_id=state.node_id,
         mode=NODE_MODE_TO_PROTO[state.mode],
         accepting_tasks=state.accepting_tasks,

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import nullcontext
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from worker.config import WorkerConfig
 
 try:
     from opentelemetry import propagate, trace
@@ -12,12 +15,12 @@ try:
 
     OTEL_AVAILABLE = True
 except ImportError:  # pragma: no cover
-    propagate = None
-    trace = None
-    Resource = None
-    TracerProvider = None
-    BatchSpanProcessor = None
-    OTEL_AVAILABLE = False
+    propagate = None  # type: ignore[assignment]
+    trace = None  # type: ignore[assignment]
+    Resource = None  # type: ignore[assignment]
+    TracerProvider = None  # type: ignore[assignment]
+    BatchSpanProcessor = None  # type: ignore[assignment]
+    OTEL_AVAILABLE = False  # type: ignore[misc]
 
 TRACEPARENT_KEY = "_traceparent"
 TRACESTATE_KEY = "_tracestate"
@@ -43,50 +46,50 @@ _SETTER = _Setter()
 _TRACING_CONFIGURED = False
 
 
-def configure_tracing(config) -> None:
-    global _TRACING_CONFIGURED
+def configure_tracing(config: WorkerConfig) -> None:
+    global _TRACING_CONFIGURED  # type: ignore[name-defined]
     if _TRACING_CONFIGURED or not config.tracing_enabled or not OTEL_AVAILABLE:
         return
 
-    resource = Resource.create(
+    resource = Resource.create(  # type: ignore[attr-defined, union-attr]
         {
             "service.name": config.tracing_service_name or "distributed-image-worker",
             "service.instance.id": config.node_id,
         }
     )
-    provider = TracerProvider(resource=resource)
+    provider = TracerProvider(resource=resource)  # type: ignore[attr-defined, call-arg]
     if config.tracing_otlp_endpoint:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
         exporter = OTLPSpanExporter(endpoint=config.tracing_otlp_endpoint)
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
-    _TRACING_CONFIGURED = True
+        provider.add_span_processor(BatchSpanProcessor(exporter))  # type: ignore[attr-defined, call-arg]
+    trace.set_tracer_provider(provider)  # type: ignore[attr-defined, union-attr]
+    _TRACING_CONFIGURED = True  # type: ignore[misc]
 
 
 def shutdown_tracing() -> None:
     if not OTEL_AVAILABLE:
         return
-    provider = trace.get_tracer_provider()
+    provider = trace.get_tracer_provider()  # type: ignore[attr-defined, union-attr]
     shutdown = getattr(provider, "shutdown", None)
     if callable(shutdown):
         shutdown()
 
 
-def get_tracer(name: str):
+def get_tracer(name: str):  # type: ignore[name-defined]
     if not OTEL_AVAILABLE:
         return None
-    return trace.get_tracer(name)
+    return trace.get_tracer(name)  # type: ignore[attr-defined, union-attr]
 
 
-def start_span(name: str, *, context=None, attributes: dict[str, Any] | None = None):
+def start_span(name: str, *, context: Any | None = None, attributes: dict[str, Any] | None = None):  # type: ignore[name-defined]
     if not OTEL_AVAILABLE:
         return nullcontext()
     tracer = get_tracer("worker")
-    return tracer.start_as_current_span(name, context=context, attributes=attributes)
+    return tracer.start_as_current_span(name, context=context, attributes=attributes)  # type: ignore[attr-defined, union-attr]
 
 
-def extract_context_from_grpc_metadata(metadata: Iterable[tuple[str, str]] | Any) -> Any:
+def extract_context_from_grpc_metadata(metadata: Iterable[tuple[str, str]] | Any) -> Any:  # type: ignore[name-defined]
     if not OTEL_AVAILABLE:
         return None
     carrier: dict[str, str] = {}
@@ -94,7 +97,7 @@ def extract_context_from_grpc_metadata(metadata: Iterable[tuple[str, str]] | Any
         key = getattr(item, "key", item[0]).lower()
         value = getattr(item, "value", item[1])
         carrier[key] = value
-    return propagate.extract(carrier, getter=_GETTER)
+    return propagate.extract(carrier, getter=_GETTER)  # type: ignore[attr-defined, union-attr, arg-type]
 
 
 def copy_internal_trace_metadata_from_grpc(target: dict[str, str], metadata: Iterable[tuple[str, str]] | Any) -> None:
@@ -111,14 +114,14 @@ def inject_current_context(target: dict[str, str]) -> None:
     if not OTEL_AVAILABLE:
         return
     carrier: dict[str, str] = {}
-    propagate.inject(carrier, setter=_SETTER)
+    propagate.inject(carrier, setter=_SETTER)  # type: ignore[attr-defined, union-attr, arg-type]
     if "traceparent" in carrier:
         target[TRACEPARENT_KEY] = carrier["traceparent"]
     if "tracestate" in carrier:
         target[TRACESTATE_KEY] = carrier["tracestate"]
 
 
-def extract_context_from_internal_metadata(metadata: dict[str, str] | None) -> Any:
+def extract_context_from_internal_metadata(metadata: dict[str, str] | None) -> Any:  # type: ignore[name-defined]
     if not OTEL_AVAILABLE:
         return None
     if not metadata:
@@ -130,7 +133,7 @@ def extract_context_from_internal_metadata(metadata: dict[str, str] | None) -> A
         carrier["tracestate"] = metadata[TRACESTATE_KEY]
     if not carrier:
         return None
-    return propagate.extract(carrier, getter=_GETTER)
+    return propagate.extract(carrier, getter=_GETTER)  # type: ignore[attr-defined, union-attr, arg-type]
 
 
 def grpc_metadata_from_internal(metadata: dict[str, str] | None) -> tuple[tuple[str, str], ...]:
@@ -162,8 +165,8 @@ def strip_internal_trace_metadata(metadata: dict[str, str] | None) -> dict[str, 
 def current_trace_ids() -> dict[str, str]:
     if not OTEL_AVAILABLE:
         return {}
-    span = trace.get_current_span()
-    span_context = span.get_span_context()
+    span = trace.get_current_span()  # type: ignore[attr-defined, union-attr]
+    span_context = span.get_span_context()  # type: ignore[union-attr]
     if not span_context.is_valid:
         return {}
     return {
@@ -172,7 +175,7 @@ def current_trace_ids() -> dict[str, str]:
     }
 
 
-def maybe_span(name: str, *, enabled: bool = True, context=None, attributes: dict[str, Any] | None = None):
+def maybe_span(name: str, *, enabled: bool = True, context: Any | None = None, attributes: dict[str, Any] | None = None):  # type: ignore[name-defined]
     if not enabled:
         return nullcontext()
-    return start_span(name, context=context, attributes=attributes)
+    return start_span(name, context=context, attributes=attributes)  # type: ignore[arg-type]

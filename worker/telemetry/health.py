@@ -5,6 +5,7 @@ import threading
 from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 from worker.models.types import NodeHealth
 
@@ -33,7 +34,7 @@ class HealthServer:
                 else:
                     status = HTTPStatus.NOT_FOUND
 
-                body = {
+                body: dict[str, str | int | bool] = {
                     "node_id": health.node_id,
                     "state": health.state.value,
                     "live": health.live,
@@ -51,7 +52,7 @@ class HealthServer:
                 self.end_headers()
                 self.wfile.write(payload)
 
-            def log_message(self, format: str, *args) -> None:  # noqa: A003
+            def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
                 return
 
         return Handler
