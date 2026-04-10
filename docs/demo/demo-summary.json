@@ -105,7 +105,7 @@
   "result": {
     "bytes": 2791,
     "file_name": "demo-input.png",
-    "result_path": "s3://distributed-output/worker-2/d1fc471a-b51d-4a24-9dda-6082af53da8b.png",
+    "result_path": "/app/data/output/d1fc471a-b51d-4a24-9dda-6082af53da8b.png",
     "success": true
   },
   "target": "127.0.0.1:50052"

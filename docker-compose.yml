@@ -1,5 +1,5 @@
 # SINGLE WORKER PRODUCTION DEPLOYMENT
-# For development with multiple workers + monitoring, use: docker-compose-dev.yml
+# For development with multiple workers, use: docker-compose-dev.yml
 # 
 # This minimal setup runs a single worker with no external dependencies.
 # Use for production deployment where:
@@ -29,7 +29,7 @@ services:
       WORKER_COORDINATOR_TARGET: ${WORKER_COORDINATOR_TARGET:-}
       
       # === OPTIONAL: Metrics Export ===
-      # Disable (set to 0) if you don't expose Prometheus metrics
+      # Disable (set to 0) if you don't expose the metrics endpoint
       WORKER_METRICS_HOST: ${WORKER_METRICS_HOST:-0.0.0.0}
       WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9100}
       
@@ -38,11 +38,10 @@ services:
       WORKER_HEALTH_HOST: ${WORKER_HEALTH_HOST:-0.0.0.0}
       WORKER_HEALTH_PORT: ${WORKER_HEALTH_PORT:-8081}
       
-      # === STORAGE (Use local disk by default, no shared storage) ===
-      WORKER_OUTPUT_DIR: ${WORKER_OUTPUT_DIR:-/app/data/out}
+      # === STORAGE (Use local disk by default) ===
+      WORKER_INPUT_DIR: ${WORKER_INPUT_DIR:-/app/data/input}
+      WORKER_OUTPUT_DIR: ${WORKER_OUTPUT_DIR:-/app/data/output}
       WORKER_STATE_DIR: ${WORKER_STATE_DIR:-/app/data/state}
-      # Keep shared storage disabled (false) for single-worker deployments
-      WORKER_REQUIRE_SHARED_STORAGE: "false"
       
       # === IMAGE PROCESSING BACKENDS ===
       WORKER_OCR_COMMAND: ${WORKER_OCR_COMMAND:-["python","scripts/backends/ocr_backend.py"]}
@@ -69,7 +68,7 @@ services:
       - "${WORKER_METRICS_PORT:-9100}:${WORKER_METRICS_PORT:-9100}"
     
     volumes:
-      - worker-data:/app/data                       # Persistent storage for outputs + state
+      - worker-data:/app/data                       # Persistent storage for input, outputs and state
       # Uncomment to mount certificates:
       # - /etc/worker/certs:/etc/worker/certs:ro
     

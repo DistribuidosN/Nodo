@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import importlib
 import os
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
@@ -22,31 +21,12 @@ def _is_local_reference(value: str) -> bool:
 
 
 class StorageClient:
-    def __init__(
-        self,
-        *,
-        endpoint_url: str | None = None,
-        access_key_id: str | None = None,
-        secret_access_key: str | None = None,
-        region: str | None = None,
-        force_path_style: bool = False,
-    ) -> None:
-        self._endpoint_url = endpoint_url
-        self._access_key_id = access_key_id
-        self._secret_access_key = secret_access_key
-        self._region = region
-        self._force_path_style = force_path_style
-        self._s3_client: Any | None = None
+    def __init__(self) -> None:
+        pass
 
     @classmethod
-    def from_config(cls, config: "WorkerConfig") -> "StorageClient":
-        return cls(
-            endpoint_url=config.storage_endpoint_url,
-            access_key_id=config.storage_access_key_id,
-            secret_access_key=config.storage_secret_access_key,
-            region=config.storage_region,
-            force_path_style=config.storage_force_path_style,
-        )
+    def from_config(cls, _config: "WorkerConfig") -> "StorageClient":
+        return cls()
 
     def join(self, base: str, *parts: str) -> str:
         clean_parts = [part.strip("/\\") for part in parts if part]
@@ -55,16 +35,6 @@ class StorageClient:
             joined = path.joinpath(*clean_parts)
             return joined.resolve().as_uri() if base.startswith("file://") else str(joined)
 
-        parsed = urlparse(base)
-        if parsed.scheme in {"s3", "minio"}:
-            bucket = parsed.netloc
-            key_parts = [parsed.path.lstrip("/"), *clean_parts]
-            key = "/".join(part for part in key_parts if part)
-            return f"{parsed.scheme}://{bucket}/{key}"
-        if parsed.scheme in {"http", "https"}:
-            url = base.rstrip("/")
-            suffix = "/".join(clean_parts)
-            return f"{url}/{suffix}" if suffix else url
         raise ValueError(f"unsupported storage URI scheme in {base}")
 
     def mkdir(self, uri: str) -> None:
@@ -85,17 +55,6 @@ class StorageClient:
                 if exc.code == 404:
                     return False
                 raise
-        if parsed.scheme in {"s3", "minio"}:
-            client = self._get_s3_client()
-            bucket, key = self._bucket_key(uri)
-            try:
-                client.head_object(Bucket=bucket, Key=key)
-                return True
-            except client.exceptions.ClientError as exc:  # pragma: no cover
-                code = exc.response.get("Error", {}).get("Code")
-                if code in {"404", "NoSuchKey", "NotFound"}:
-                    return False
-                raise
         raise ValueError(f"unsupported storage URI scheme in {uri}")
 
     def read_bytes(self, uri: str) -> bytes:
@@ -106,11 +65,6 @@ class StorageClient:
         if parsed.scheme in {"http", "https"}:
             with urllib.request.urlopen(uri) as response:
                 return response.read()
-        if parsed.scheme in {"s3", "minio"}:
-            client = self._get_s3_client()
-            bucket, key = self._bucket_key(uri)
-            response = client.get_object(Bucket=bucket, Key=key)
-            return response["Body"].read()
         raise ValueError(f"unsupported storage URI scheme in {uri}")
 
     def read_text(self, uri: str, encoding: str = "utf-8") -> str:
@@ -125,21 +79,6 @@ class StorageClient:
             tmp_path.replace(path)
             return
 
-        parsed = urlparse(uri)
-        if parsed.scheme in {"http", "https"}:
-            request = urllib.request.Request(uri, data=payload, method="PUT")
-            if content_type:
-                request.add_header("Content-Type", content_type)
-            with urllib.request.urlopen(request):
-                return
-        if parsed.scheme in {"s3", "minio"}:
-            client = self._get_s3_client()
-            bucket, key = self._bucket_key(uri)
-            kwargs: dict[str, Any] = {"Bucket": bucket, "Key": key, "Body": payload}
-            if content_type:
-                kwargs["ContentType"] = content_type
-            client.put_object(**kwargs)
-            return
         raise ValueError(f"unsupported storage URI scheme in {uri}")
 
     def write_text(self, uri: str, payload: str, encoding: str = "utf-8") -> None:
@@ -150,21 +89,12 @@ class StorageClient:
             self._local_path(uri).unlink(missing_ok=True)
             return
 
-        parsed = urlparse(uri)
-        if parsed.scheme in {"s3", "minio"}:
-            client = self._get_s3_client()
-            bucket, key = self._bucket_key(uri)
-            client.delete_object(Bucket=bucket, Key=key)
-            return
         raise ValueError(f"unsupported delete target for {uri}")
 
     def list_uris(self, prefix_uri: str, *, suffix: str = "") -> list[str]:
         if _is_local_reference(prefix_uri):
             return self._list_local_uris(prefix_uri, suffix)
 
-        parsed = urlparse(prefix_uri)
-        if parsed.scheme in {"s3", "minio"}:
-            return self._list_s3_uris(parsed.scheme, prefix_uri, suffix)
         raise ValueError(f"listing is not supported for {prefix_uri}")
 
     def _list_local_uris(self, prefix_uri: str, suffix: str) -> list[str]:
@@ -177,28 +107,6 @@ class StorageClient:
             local_entries = [item for item in local_entries if item.name.endswith(suffix)]
         return sorted(str(item) for item in local_entries)
 
-    def _list_s3_uris(self, scheme: str, prefix_uri: str, suffix: str) -> list[str]:
-        client = self._get_s3_client()
-        bucket, prefix = self._bucket_key(prefix_uri)
-        entries: list[str] = []
-        continuation_token: str | None = None
-
-        while True:
-            kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix.rstrip("/") + "/"}
-            if continuation_token:
-                kwargs["ContinuationToken"] = continuation_token
-            response = client.list_objects_v2(**kwargs)
-            for item in response.get("Contents", []):
-                key = item["Key"]
-                if key.endswith("/") or (suffix and not key.endswith(suffix)):
-                    continue
-                entries.append(f"{scheme}://{bucket}/{key}")
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = response.get("NextContinuationToken")
-
-        return sorted(entries)
-
     def _local_path(self, uri: str) -> Path:
         if uri.startswith("file://"):
             parsed = urlparse(uri)
@@ -207,33 +115,3 @@ class StorageClient:
                 path = path.lstrip("/")
             return Path(path)
         return Path(uri)
-
-    def _bucket_key(self, uri: str) -> tuple[str, str]:
-        parsed = urlparse(uri)
-        return parsed.netloc, parsed.path.lstrip("/")
-
-    def _get_s3_client(self) -> Any:
-        if self._s3_client is not None:
-            return self._s3_client
-        try:
-            boto3_module = cast(Any, importlib.import_module("boto3"))
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("boto3 is required for s3:// and minio:// storage backends") from exc
-
-        session: Any = boto3_module.session.Session()
-        config: Any = None
-        if self._force_path_style:
-            botocore_config_module = cast(Any, importlib.import_module("botocore.config"))
-            botocore_config = botocore_config_module.Config
-
-            config = botocore_config(s3={"addressing_style": "path"})
-        client: Any = session.client(
-            "s3",
-            endpoint_url=self._endpoint_url,
-            aws_access_key_id=self._access_key_id,
-            aws_secret_access_key=self._secret_access_key,
-            region_name=self._region,
-            config=config,
-        )
-        self._s3_client = client
-        return client

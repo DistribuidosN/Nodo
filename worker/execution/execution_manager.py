@@ -20,7 +20,6 @@ from worker.execution.image_processor import (
     persist_output_bytes,
     process_image,
     process_transform_stage,
-    resolve_output_uri,
 )
 from worker.models.types import (
     ExecutionResultRecord,
@@ -108,8 +107,6 @@ class ExecutionManager:
     async def start_task(self, task: Task, requirements: ResourceRequirements) -> None:
         await self._semaphore.acquire()
         task.attempt += 1
-        if self._config.output_uri_prefix and "output_uri" not in task.metadata:
-            task.metadata.setdefault("output_uri_prefix", self._config.output_uri_prefix)
         if self._config.ocr_command and "ocr_command" not in task.metadata:
             task.metadata["ocr_command"] = self._config.ocr_command
         if self._config.inference_command and "inference_command" not in task.metadata:
@@ -239,7 +236,6 @@ class ExecutionManager:
             task,
             str(self._config.output_dir),
             self._storage,
-            self._config.output_uri_prefix,
         )
         return RunningTask(
             task=task,
@@ -277,14 +273,11 @@ class ExecutionManager:
 
         if not task.transforms:
             output_format = (task.output_format or current_format or "png").lower()
-            output_uri = resolve_output_uri(task, output_format, self._config.output_uri_prefix)
             output_path, size_bytes = persist_output_bytes(
                 task.task_id,
                 payload,
                 output_format,
                 str(self._config.output_dir),
-                self._storage,
-                output_uri=output_uri,
             )
             return str(output_path), output_format, width, height, size_bytes, metadata
 
@@ -320,14 +313,11 @@ class ExecutionManager:
             metadata.update(stage_metadata)
             self._check_cancel_token(task)
 
-        output_uri = resolve_output_uri(task, current_format, self._config.output_uri_prefix)
         output_path, size_bytes = persist_output_bytes(
             task.task_id,
             payload,
             current_format,
             str(self._config.output_dir),
-            self._storage,
-            output_uri=output_uri,
         )
         return str(output_path), current_format, width, height, size_bytes, metadata
 

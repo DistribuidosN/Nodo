@@ -49,7 +49,6 @@ Arbol principal:
 worker/
   server.py
   config.py
-  ARCHITECTURE.md
   core/
   execution/
   grpc/
@@ -105,7 +104,7 @@ Para apagar:
 docker compose down
 ```
 
-### 2. Desarrollo local: tres workers y herramientas auxiliares
+### 2. Desarrollo local: tres workers locales
 
 Archivo:
 
@@ -116,9 +115,6 @@ Este modo levanta:
 - `worker1`
 - `worker2`
 - `worker3`
-- `minio`
-- `prometheus`
-- `grafana`
 
 Uso:
 
@@ -148,6 +144,7 @@ Variables importantes:
 - `WORKER_BIND_HOST`
 - `WORKER_BIND_PORT`
 - `WORKER_COORDINATOR_TARGET`
+- `WORKER_INPUT_DIR`
 - `WORKER_OUTPUT_DIR`
 - `WORKER_STATE_DIR`
 - `WORKER_METRICS_PORT`
@@ -233,8 +230,22 @@ El worker puede exponer:
 - `metrics`
 
 Eso es util para operacion, pruebas o integracion, pero la responsabilidad de
-guardar historicos y construir graficas debe quedar del lado del servidor
-principal.
+guardar historicos, persistir metricas y construir graficas debe quedar del
+lado del servidor principal o su storage/BD.
+
+## Storage local del nodo
+
+Cada worker materializa las entradas y salidas en disco local:
+
+- `data/input`
+- `data/output`
+- `data/state`
+
+En Docker esos paths viven dentro de `/app/data`.
+
+El worker no necesita MinIO ni storage compartido para operar. Si el servidor
+principal quiere centralizar resultados, debe copiarlos o persistirlos desde su
+propio lado despues de recibir el reporte o el resultado.
 
 ## Scripts utiles
 
@@ -243,12 +254,6 @@ principal.
 - [scripts/ops/healthcheck.py](scripts/ops/healthcheck.py)
 - [scripts/backends/ocr_backend.py](scripts/backends/ocr_backend.py)
 - [scripts/backends/inference_backend.py](scripts/backends/inference_backend.py)
-
-## Documentacion y soporte
-
-- [docs/README.md](docs/README.md)
-- [scripts/README.md](scripts/README.md)
-- [examples/README.md](examples/README.md)
 
 ## Comandos rapidos con PowerShell
 
@@ -272,5 +277,6 @@ principal.
 El proyecto queda preparado para:
 
 - desplegar un worker por maquina o VM
+- usar storage local por nodo para entradas, salidas y estado
 - dejar la coordinacion real en el servidor principal Java
 - mantener un entorno local separado para pruebas con varios workers

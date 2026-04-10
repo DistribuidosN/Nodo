@@ -1,81 +1,4 @@
 services:
-  minio:
-    image: minio/minio:latest
-    command: ["server", "/data", "--console-address", ":9001"]
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/minio_access_key
-      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_secret_key
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/ready"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-lc"]
-    command: >
-      "mc alias set local http://minio:9000 $(cat /run/secrets/minio_access_key) $(cat /run/secrets/minio_secret_key) &&
-       mc mb --ignore-existing local/distributed-state &&
-       mc mb --ignore-existing local/distributed-output"
-    secrets:
-      - minio_access_key
-      - minio_secret_key
-
-  prometheus:
-    image: prom/prometheus:v2.54.1
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-    ports:
-      - "9090:9090"
-    depends_on:
-      worker1:
-        condition: service_started
-      worker2:
-        condition: service_started
-      worker3:
-        condition: service_started
-
-  grafana:
-    image: grafana/grafana-oss:11.1.0
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./deploy/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./deploy/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    ports:
-      - "3000:3000"
-    depends_on:
-      prometheus:
-        condition: service_started
-
   worker1:
     build:
       context: .
@@ -83,17 +6,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    command:
-      [
-        "/bin/sh",
-        "-lc",
-        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
-         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
-         python -m worker.server"
-      ]
+    command: ["python", "-m", "worker.server"]
     environment:
       WORKER_NODE_ID: worker-1
       WORKER_BIND_HOST: 0.0.0.0
@@ -102,14 +15,9 @@ services:
       WORKER_METRICS_PORT: 9101
       WORKER_HEALTH_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 8081
-      WORKER_OUTPUT_DIR: /app/data/out
+      WORKER_INPUT_DIR: /app/data/input
+      WORKER_OUTPUT_DIR: /app/data/output
       WORKER_STATE_DIR: /app/data/state
-      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-1
-      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
-      WORKER_REQUIRE_SHARED_STORAGE: "true"
-      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
-      WORKER_STORAGE_REGION: us-east-1
-      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
       WORKER_OCR_COMMAND: '["python","scripts/backends/ocr_backend.py"]'
       WORKER_INFERENCE_COMMAND: '["python","scripts/backends/inference_backend.py"]'
       WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
@@ -123,13 +31,9 @@ services:
     volumes:
       - worker1-data:/app/data
     secrets:
-      - minio_access_key
-      - minio_secret_key
       - root_ca_cert
       - worker_server_cert
       - worker_server_key
-      - worker_client_cert
-      - worker_client_key
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -146,17 +50,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    command:
-      [
-        "/bin/sh",
-        "-lc",
-        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
-         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
-         python -m worker.server"
-      ]
+    command: ["python", "-m", "worker.server"]
     environment:
       WORKER_NODE_ID: worker-2
       WORKER_BIND_HOST: 0.0.0.0
@@ -165,14 +59,9 @@ services:
       WORKER_METRICS_PORT: 9102
       WORKER_HEALTH_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 8082
-      WORKER_OUTPUT_DIR: /app/data/out
+      WORKER_INPUT_DIR: /app/data/input
+      WORKER_OUTPUT_DIR: /app/data/output
       WORKER_STATE_DIR: /app/data/state
-      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-2
-      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
-      WORKER_REQUIRE_SHARED_STORAGE: "true"
-      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
-      WORKER_STORAGE_REGION: us-east-1
-      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
       WORKER_OCR_COMMAND: '["python","scripts/backends/ocr_backend.py"]'
       WORKER_INFERENCE_COMMAND: '["python","scripts/backends/inference_backend.py"]'
       WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
@@ -186,13 +75,9 @@ services:
     volumes:
       - worker2-data:/app/data
     secrets:
-      - minio_access_key
-      - minio_secret_key
       - root_ca_cert
       - worker_server_cert
       - worker_server_key
-      - worker_client_cert
-      - worker_client_key
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -209,17 +94,7 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    command:
-      [
-        "/bin/sh",
-        "-lc",
-        "export WORKER_STORAGE_ACCESS_KEY_ID=$(cat /run/secrets/minio_access_key) &&
-         export WORKER_STORAGE_SECRET_ACCESS_KEY=$(cat /run/secrets/minio_secret_key) &&
-         python -m worker.server"
-      ]
+    command: ["python", "-m", "worker.server"]
     environment:
       WORKER_NODE_ID: worker-3
       WORKER_BIND_HOST: 0.0.0.0
@@ -228,14 +103,9 @@ services:
       WORKER_METRICS_PORT: 9103
       WORKER_HEALTH_HOST: 0.0.0.0
       WORKER_HEALTH_PORT: 8083
-      WORKER_OUTPUT_DIR: /app/data/out
+      WORKER_INPUT_DIR: /app/data/input
+      WORKER_OUTPUT_DIR: /app/data/output
       WORKER_STATE_DIR: /app/data/state
-      WORKER_OUTPUT_URI_PREFIX: s3://distributed-output/worker-3
-      WORKER_STATE_URI_PREFIX: s3://distributed-state/workers
-      WORKER_REQUIRE_SHARED_STORAGE: "true"
-      WORKER_STORAGE_ENDPOINT_URL: http://minio:9000
-      WORKER_STORAGE_REGION: us-east-1
-      WORKER_STORAGE_FORCE_PATH_STYLE: "true"
       WORKER_OCR_COMMAND: '["python","scripts/backends/ocr_backend.py"]'
       WORKER_INFERENCE_COMMAND: '["python","scripts/backends/inference_backend.py"]'
       WORKER_GRPC_SERVER_CERT_FILE: /run/secrets/worker_server_cert
@@ -249,13 +119,9 @@ services:
     volumes:
       - worker3-data:/app/data
     secrets:
-      - minio_access_key
-      - minio_secret_key
       - root_ca_cert
       - worker_server_cert
       - worker_server_key
-      - worker_client_cert
-      - worker_client_key
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -266,25 +132,14 @@ services:
       start_period: 15s
 
 secrets:
-  minio_access_key:
-    file: ./.secrets/minio_access_key.txt
-  minio_secret_key:
-    file: ./.secrets/minio_secret_key.txt
   root_ca_cert:
     file: ./.secrets/pki/root-ca.crt
   worker_server_cert:
     file: ./.secrets/pki/worker-server.crt
   worker_server_key:
     file: ./.secrets/pki/worker-server.key
-  worker_client_cert:
-    file: ./.secrets/pki/worker-client.crt
-  worker_client_key:
-    file: ./.secrets/pki/worker-client.key
 
 volumes:
-  minio-data:
-  prometheus-data:
-  grafana-data:
   worker1-data:
   worker2-data:
   worker3-data:

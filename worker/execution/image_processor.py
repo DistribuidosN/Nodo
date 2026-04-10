@@ -8,8 +8,9 @@ import tempfile
 import time
 from io import BytesIO
 from pathlib import Path
+from typing import cast
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageColor, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from worker.core.storage import StorageClient
 from worker.models.types import OperationType, Task
@@ -36,7 +37,6 @@ INTERNAL_RESULT_METADATA_KEYS = {
     "ocr_command",
     "inference_command",
     "adapter_timeout_seconds",
-    "output_uri_prefix",
     *INTERNAL_TRACE_KEYS,
 }
 
@@ -49,7 +49,6 @@ def process_image(
     task: Task,
     output_dir: str,
     storage: StorageClient | None = None,
-    output_uri_prefix: str | None = None,
 ) -> tuple[str, str, int, int, int, dict[str, str]]:
     storage_client = storage or StorageClient()
     _check_cancelled(task)
@@ -60,14 +59,11 @@ def process_image(
     requested_format = (task.output_format or task.input_image.image_format or "png").lower()
     output_bytes, _ = serialize_image(image, requested_format)
     width, height = image.size
-    output_uri = resolve_output_uri(task, requested_format, output_uri_prefix)
     output_path, size_bytes = persist_output_bytes(
         task.task_id,
         output_bytes,
         requested_format,
         output_dir,
-        storage_client,
-        output_uri=output_uri,
     )
     metadata = _result_metadata(task, processor="pillow", output_backend=_output_backend(output_path))
     return str(output_path), requested_format, width, height, size_bytes, metadata
@@ -117,33 +113,12 @@ def serialize_image(image: Image.Image, requested_format: str) -> tuple[bytes, s
     return buffer.getvalue(), save_format
 
 
-def resolve_output_uri(task: Task, requested_format: str, output_uri_prefix: str | None = None) -> str | None:
-    target = task.metadata.get("output_uri")
-    if not target:
-        target = task.metadata.get("output_uri_prefix") or output_uri_prefix
-    if not target:
-        return None
-    if target.endswith("/"):
-        return f"{target}{task.task_id}.{requested_format}"
-    suffix = Path(target).suffix
-    return target if suffix else f"{target.rstrip('/')}/{task.task_id}.{requested_format}"
-
-
 def persist_output_bytes(
     task_id: str,
     output_bytes: bytes,
     requested_format: str,
     output_dir: str,
-    storage: StorageClient | None = None,
-    *,
-    output_uri: str | None = None,
 ) -> tuple[str, int]:
-    storage_client = storage or StorageClient()
-    if output_uri:
-        content_type = _content_type_for_format(requested_format)
-        storage_client.write_bytes(output_uri, output_bytes, content_type=content_type)
-        return output_uri, len(output_bytes)
-
     output_path = Path(output_dir) / f"{task_id}.{requested_format}"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -222,14 +197,7 @@ def _apply_transform(task: Task, image: Image.Image, operation: OperationType, p
         image = ImageEnhance.Brightness(image).enhance(brightness)
         return ImageEnhance.Contrast(image).enhance(contrast)
     if operation == OperationType.WATERMARK_TEXT:
-        draw = ImageDraw.Draw(image)
-        draw.text(
-            (int(params.get("x", "16")), int(params.get("y", "16"))),
-            params.get("text", ""),
-            fill=params.get("fill", "white"),
-            font=ImageFont.load_default(),
-        )
-        return image
+        return _apply_watermark_text(image, params)
     if operation == OperationType.FORMAT_CONVERSION:
         return image
     if operation in {OperationType.OCR, OperationType.INFERENCE}:
@@ -248,6 +216,9 @@ def _rotate_cooperative(task: Task, image: Image.Image, params: dict[str, str]) 
     expand = params.get("expand", "true").lower() == "true"
     if math.isclose(angle, 0.0, abs_tol=1e-9):
         return image
+    if exact_quadrant := _exact_quadrant_rotation(angle, expand):
+        _step_guard(task, params)
+        return image.transpose(exact_quadrant)
     current = image
     step_limit = max(float(params.get("step_degrees", "10")), 1.0)
     steps = max(1, math.ceil(abs(angle) / step_limit))
@@ -307,6 +278,117 @@ def _step_guard(task: Task, params: dict[str, str]) -> None:
 
 def _tile_size(params: dict[str, str]) -> int:
     return max(64, int(params.get("tile_size", str(DEFAULT_TILE_SIZE))))
+
+
+def _exact_quadrant_rotation(angle: float, expand: bool) -> Image.Transpose | None:
+    if not expand:
+        return None
+    normalized = int(round(angle)) % 360
+    if not math.isclose(angle, normalized, abs_tol=1e-9):
+        return None
+    mapping: dict[int, Image.Transpose] = {
+        90: Image.Transpose.ROTATE_90,
+        180: Image.Transpose.ROTATE_180,
+        270: Image.Transpose.ROTATE_270,
+    }
+    return mapping.get(normalized)
+
+
+def _load_watermark_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    font_size = max(12, size)
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=font_size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _watermark_stroke_fill(fill: str) -> str:
+    normalized = fill.strip().lower()
+    dark_fills = {"black", "#000", "#000000", "navy", "blue", "purple", "maroon", "brown"}
+    return "white" if normalized in dark_fills else "black"
+
+
+def _apply_watermark_text(image: Image.Image, params: dict[str, str]) -> Image.Image:
+    text = params.get("text", "").strip()
+    if not text:
+        return image
+
+    size = max(12, int(params.get("size", "36")))
+    stroke_width = max(0, int(params.get("stroke_width", "2")))
+    opacity = max(16, min(200, int(params.get("opacity", "96"))))
+    angle = float(params.get("angle", "-28"))
+    offset_x = int(params.get("x", "16"))
+    offset_y = int(params.get("y", "16"))
+    font = _load_watermark_font(size)
+
+    fill = params.get("fill", "white")
+    fill_rgba = _color_with_alpha(fill, opacity)
+    stroke_rgba = _color_with_alpha(_watermark_stroke_fill(fill), min(255, opacity + 48))
+    stamp = _build_watermark_stamp(text, font, fill_rgba, stroke_rgba, stroke_width, angle)
+
+    spacing_x = max(stamp.width // 2, int(params.get("spacing_x", str(max(220, size * 5)))))
+    spacing_y = max(stamp.height // 2, int(params.get("spacing_y", str(max(160, size * 4)))))
+
+    base = image.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    row_index = 0
+    start_y = -stamp.height + offset_y
+    end_y = overlay.height + stamp.height
+    start_x = -stamp.width + offset_x
+    end_x = overlay.width + stamp.width
+
+    for top in range(start_y, end_y, spacing_y):
+        row_shift = spacing_x // 2 if row_index % 2 else 0
+        for left in range(start_x + row_shift, end_x, spacing_x):
+            overlay.paste(stamp, (left, top), stamp)
+        row_index += 1
+
+    result = Image.alpha_composite(base, overlay)
+    return _restore_image_mode(result, image.mode)
+
+
+def _build_watermark_stamp(
+    text: str,
+    font: ImageFont.ImageFont | ImageFont.FreeTypeFont,
+    fill_rgba: tuple[int, int, int, int],
+    stroke_rgba: tuple[int, int, int, int],
+    stroke_width: int,
+    angle: float,
+) -> Image.Image:
+    dummy = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(dummy)
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    padding = max(18, stroke_width * 6)
+
+    stamp = Image.new("RGBA", (width + padding * 2, height + padding * 2), (0, 0, 0, 0))
+    stamp_draw = ImageDraw.Draw(stamp)
+    stamp_draw.text(
+        (padding - left, padding - top),
+        text,
+        fill=fill_rgba,
+        font=font,
+        stroke_width=stroke_width,
+        stroke_fill=stroke_rgba,
+    )
+    return stamp.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+
+
+def _color_with_alpha(fill: str, opacity: int) -> tuple[int, int, int, int]:
+    try:
+        rgba = ImageColor.getcolor(fill, "RGBA")
+    except ValueError:
+        rgba = ImageColor.getcolor("white", "RGBA")
+    return rgba[:3] + (opacity,)
+
+
+def _restore_image_mode(image: Image.Image, original_mode: str) -> Image.Image:
+    if original_mode == image.mode:
+        return image
+    if original_mode in {"RGB", "L", "RGBA"}:
+        return image.convert(original_mode)
+    return image
 
 
 def _resize_tiled(task: Task, image: Image.Image, target_width: int, target_height: int, params: dict[str, str]) -> Image.Image:
@@ -513,21 +595,6 @@ def _normalize_image_for_format(image: Image.Image, save_format: str) -> Image.I
     if save_format == "ICO" and image.mode not in {"RGBA", "RGB", "L"}:
         return image.convert("RGBA")
     return image
-
-
-def _content_type_for_format(requested_format: str) -> str:
-    normalized = requested_format.lower()
-    return {
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "png": "image/png",
-        "tif": "image/tiff",
-        "tiff": "image/tiff",
-        "webp": "image/webp",
-        "bmp": "image/bmp",
-        "gif": "image/gif",
-        "ico": "image/x-icon",
-    }.get(normalized, f"image/{normalized}")
 
 
 def _stringify(value: object) -> str:

@@ -33,6 +33,7 @@ class WorkerConfig:
     metrics_port: int
     health_host: str
     health_port: int
+    input_dir: Path
     output_dir: Path
     state_dir: Path
     max_active_tasks: int
@@ -66,14 +67,6 @@ class WorkerConfig:
     max_image_width: int = 12_000
     max_image_height: int = 12_000
     max_image_pixels: int = 40_000_000
-    require_shared_storage: bool = False
-    output_uri_prefix: str | None = None
-    state_uri_prefix: str | None = None
-    storage_endpoint_url: str | None = None
-    storage_access_key_id: str | None = None
-    storage_secret_access_key: str | None = None
-    storage_region: str | None = None
-    storage_force_path_style: bool = False
     ocr_command: str | None = None
     inference_command: str | None = None
     adapter_timeout_seconds: float = 30.0
@@ -105,7 +98,8 @@ class WorkerConfig:
             metrics_port=_get_int("WORKER_METRICS_PORT", 9100),
             health_host=os.getenv("WORKER_HEALTH_HOST", "127.0.0.1"),
             health_port=_get_int("WORKER_HEALTH_PORT", 8081),
-            output_dir=Path(os.getenv("WORKER_OUTPUT_DIR", "data/out")),
+            input_dir=Path(os.getenv("WORKER_INPUT_DIR", "data/input")),
+            output_dir=Path(os.getenv("WORKER_OUTPUT_DIR", "data/output")),
             state_dir=Path(os.getenv("WORKER_STATE_DIR", "data/state")),
             max_active_tasks=max_active,
             process_pool_workers=process_workers,
@@ -138,14 +132,6 @@ class WorkerConfig:
             max_image_width=_get_int("WORKER_MAX_IMAGE_WIDTH", 12_000),
             max_image_height=_get_int("WORKER_MAX_IMAGE_HEIGHT", 12_000),
             max_image_pixels=_get_int("WORKER_MAX_IMAGE_PIXELS", 40_000_000),
-            require_shared_storage=_get_bool("WORKER_REQUIRE_SHARED_STORAGE", False),
-            output_uri_prefix=os.getenv("WORKER_OUTPUT_URI_PREFIX"),
-            state_uri_prefix=os.getenv("WORKER_STATE_URI_PREFIX"),
-            storage_endpoint_url=os.getenv("WORKER_STORAGE_ENDPOINT_URL"),
-            storage_access_key_id=os.getenv("WORKER_STORAGE_ACCESS_KEY_ID"),
-            storage_secret_access_key=os.getenv("WORKER_STORAGE_SECRET_ACCESS_KEY"),
-            storage_region=os.getenv("WORKER_STORAGE_REGION"),
-            storage_force_path_style=_get_bool("WORKER_STORAGE_FORCE_PATH_STYLE", False),
             ocr_command=os.getenv("WORKER_OCR_COMMAND"),
             inference_command=os.getenv("WORKER_INFERENCE_COMMAND"),
             adapter_timeout_seconds=_get_float("WORKER_ADAPTER_TIMEOUT_SECONDS", 30.0),

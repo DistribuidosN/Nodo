@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "3ee90bd8-3d93-47b5-8d62-6395f8c49a23",
     "name": "Nodo Workers Local",
-    "description": "Coleccion importable en Postman para revisar endpoints HTTP del stack local de workers.\n\nGlosario rapido:\n- `livez`: se usa para saber si el proceso sigue vivo. En corto: `no esta muerto`.\n- `readyz`: se usa para saber si el servicio esta listo para recibir trabajo. En corto: `si esta listo para usarse`.\n- `metrics`: endpoint de metricas en formato Prometheus. Expone CPU, memoria, cola, tareas activas, errores y tiempos.\n- `Prometheus`: servicio que recoge periodicamente las metricas de los workers.\n- `targets`: lista de endpoints que Prometheus esta intentando scrapear. Si un target esta `UP`, lo esta leyendo bien.\n- `Grafana`: panel visual que se conecta a Prometheus para mostrar dashboards.\n\nPara probar gRPC en Postman, importa tambien los protos `proto/imagenode.proto` y `proto/worker_node.proto`, usa el environment `nodo-workers-local.postman_environment.json` y pega los payloads de `grpc_payloads.json`.",
+    "description": "Coleccion importable en Postman para revisar endpoints HTTP del stack local de workers.\n\nGlosario rapido:\n- `livez`: se usa para saber si el proceso sigue vivo. En corto: `no esta muerto`.\n- `readyz`: se usa para saber si el servicio esta listo para recibir trabajo. En corto: `si esta listo para usarse`.\n- `metrics`: endpoint de metricas del worker. Expone CPU, memoria, cola, tareas activas, errores y tiempos.\n\nPara probar gRPC en Postman, importa tambien los protos `proto/imagenode.proto` y `proto/worker_node.proto`, usa el environment `nodo-workers-local.postman_environment.json` y pega los payloads de `grpc_payloads.json`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -60,7 +60,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"task\": {\n    \"task_id\": \"postman-task-1\",\n    \"idempotency_key\": \"postman-task-1\",\n    \"priority\": 50,\n    \"max_retries\": 2,\n    \"transforms\": [\n      {\"type\": \"OPERATION_GRAYSCALE\"},\n      {\"type\": \"OPERATION_BRIGHTNESS_CONTRAST\", \"params\": {\"contrast\": \"1.4\"}},\n      {\"type\": \"OPERATION_SHARPEN\", \"params\": {\"factor\": \"1.3\"}}\n    ],\n    \"input\": {\n      \"image_id\": \"image-1\",\n      \"input_uri\": \"s3://distributed-output/sample/pagina.png\",\n      \"format\": \"IMAGE_FORMAT_PNG\"\n    },\n    \"output_format\": \"IMAGE_FORMAT_PNG\",\n    \"metadata\": {\n      \"requested_by\": \"postman\"\n    }\n  }\n}"
+              "raw": "{\n  \"task\": {\n    \"task_id\": \"postman-task-1\",\n    \"idempotency_key\": \"postman-task-1\",\n    \"priority\": 50,\n    \"max_retries\": 2,\n    \"transforms\": [\n      {\"type\": \"OPERATION_GRAYSCALE\"},\n      {\"type\": \"OPERATION_BRIGHTNESS_CONTRAST\", \"params\": {\"contrast\": \"1.4\"}},\n      {\"type\": \"OPERATION_SHARPEN\", \"params\": {\"factor\": \"1.3\"}}\n    ],\n    \"input\": {\n      \"image_id\": \"image-1\",\n      \"content\": \"<BASE64_IMAGE_BYTES>\",\n      \"format\": \"IMAGE_FORMAT_PNG\"\n    },\n    \"output_format\": \"IMAGE_FORMAT_PNG\",\n    \"metadata\": {\n      \"requested_by\": \"postman\"\n    }\n  }\n}"
             },
             "url": "grpc://{{worker1_grpc}}/worker.WorkerControlService/SubmitTask",
             "description": "Ejemplo de body para `worker.WorkerControlService/SubmitTask`.\n\nEste ejemplo sirve mas para pruebas internas del worker que para el flujo de negocio."
@@ -175,7 +175,7 @@
     },
     {
       "name": "Workers Metrics",
-      "description": "Endpoints `metrics` expuestos por cada worker.\n\nEstos endpoints no son para humanos principalmente: Prometheus los consulta periodicamente para recolectar metricas. Si los abres, veras texto plano con nombres y valores de metricas.",
+      "description": "Endpoints `metrics` expuestos por cada worker.\n\nSi los abres, veras texto plano con nombres y valores de metricas.",
       "item": [
         {
           "name": "Worker 1 - metrics",
@@ -183,7 +183,7 @@
             "method": "GET",
             "header": [],
             "url": "{{worker1_metrics}}",
-            "description": "Metricas Prometheus del worker 1.\n\nAqui deberias ver datos como longitud de cola, tareas activas, CPU, memoria, errores y tiempos."
+            "description": "Metricas del worker 1.\n\nAqui deberias ver datos como longitud de cola, tareas activas, CPU, memoria, errores y tiempos."
           },
           "response": []
         },
@@ -193,7 +193,7 @@
             "method": "GET",
             "header": [],
             "url": "{{worker2_metrics}}",
-            "description": "Metricas Prometheus del worker 2."
+            "description": "Metricas del worker 2."
           },
           "response": []
         },
@@ -203,53 +203,7 @@
             "method": "GET",
             "header": [],
             "url": "{{worker3_metrics}}",
-            "description": "Metricas Prometheus del worker 3."
-          },
-          "response": []
-        }
-      ]
-    },
-    {
-      "name": "Observability and Storage",
-      "description": "Endpoints operativos del stack local.\n\n`Prometheus` recoge y almacena metricas.\n`Grafana` las muestra en dashboards.\n`MinIO` es el storage compartido donde quedan estados y resultados.",
-      "item": [
-        {
-          "name": "Prometheus - targets",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{prometheus_url}}/api/v1/targets",
-            "description": "Lista de `targets` scrapeados por Prometheus.\n\nUn target es un endpoint de metricas que Prometheus intenta leer. Si sale `UP`, Prometheus esta recolectando bien; si sale `DOWN`, hay un problema de red, puerto o servicio."
-          },
-          "response": []
-        },
-        {
-          "name": "Grafana - health",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{grafana_url}}/api/health",
-            "description": "Salud de Grafana.\n\nSirve para validar que el panel visual esta arriba y puede conectarse luego a Prometheus."
-          },
-          "response": []
-        },
-        {
-          "name": "MinIO - live",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{minio_api}}/minio/health/live",
-            "description": "Liveness de MinIO.\n\nComprueba que el proceso de storage compartido sigue vivo."
-          },
-          "response": []
-        },
-        {
-          "name": "MinIO - ready",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{minio_api}}/minio/health/ready",
-            "description": "Readiness de MinIO.\n\nComprueba que MinIO esta listo para responder lecturas y escrituras."
+            "description": "Metricas del worker 3."
           },
           "response": []
         }
@@ -280,18 +234,6 @@
     {
       "key": "worker3_metrics",
       "value": "http://127.0.0.1:9103"
-    },
-    {
-      "key": "prometheus_url",
-      "value": "http://127.0.0.1:9090"
-    },
-    {
-      "key": "grafana_url",
-      "value": "http://127.0.0.1:3000"
-    },
-    {
-      "key": "minio_api",
-      "value": "http://127.0.0.1:9000"
     }
   ]
 }

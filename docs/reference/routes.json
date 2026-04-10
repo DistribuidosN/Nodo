@@ -84,23 +84,12 @@
         "readyz": "http://127.0.0.1:8083/readyz",
         "metrics": "http://127.0.0.1:9103"
       }
-    ],
-    "observability": {
-      "prometheus": "http://127.0.0.1:9090",
-      "grafana": "http://127.0.0.1:3000"
-    },
-    "storage": {
-      "minio_api": "http://127.0.0.1:9000",
-      "minio_console": "http://127.0.0.1:9001"
-    }
-  },
-  "storage_uris": {
-    "state_prefix": "s3://distributed-state/workers",
-    "output_prefixes": [
-      "s3://distributed-output/worker-1",
-      "s3://distributed-output/worker-2",
-      "s3://distributed-output/worker-3"
     ]
+  },
+  "worker_data_layout": {
+    "input_dir": "/app/data/input",
+    "output_dir": "/app/data/output",
+    "state_dir": "/app/data/state"
   },
   "repo_files": {
     "business_proto": "proto/imagenode.proto",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -95,11 +94,6 @@ def _sign_leaf(
     return key, cert
 
 
-def _write_secret_text(path: Path, value: str) -> None:
-    if not path.exists():
-        path.write_text(value, encoding="utf-8")
-
-
 def main() -> None:
     PKI_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -139,9 +133,6 @@ def main() -> None:
         key, cert = _sign_leaf(common_name=name, issuer_key=ca_key, issuer_cert=ca_cert, **options)
         _write_private_key(key_path, key)
         _write_cert(cert_path, cert)
-
-    _write_secret_text(SECRETS_DIR / "minio_access_key.txt", f"minio-{secrets.token_hex(8)}")
-    _write_secret_text(SECRETS_DIR / "minio_secret_key.txt", secrets.token_urlsafe(32))
 
 
 if __name__ == "__main__":

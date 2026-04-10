@@ -60,13 +60,41 @@ def _parse_angle(value: str) -> tuple[str, str]:
 
 def _parse_watermark(value: str) -> dict[str, str]:
     if not value:
-        return {"text": "", "x": "16", "y": "16", "fill": "white"}
+        return {
+            "text": "",
+            "x": "16",
+            "y": "16",
+            "fill": "white",
+            "size": "36",
+            "stroke_width": "2",
+            "opacity": "96",
+            "angle": "-28",
+            "spacing_x": "220",
+            "spacing_y": "160",
+        }
     parts = [item.strip() for item in value.split("|")]
     text = parts[0]
     x = parts[1] if len(parts) > 1 and parts[1] else "16"
     y = parts[2] if len(parts) > 2 and parts[2] else "16"
     fill = parts[3] if len(parts) > 3 and parts[3] else "white"
-    return {"text": text, "x": x, "y": y, "fill": fill}
+    size = parts[4] if len(parts) > 4 and parts[4] else "36"
+    stroke_width = parts[5] if len(parts) > 5 and parts[5] else "2"
+    opacity = parts[6] if len(parts) > 6 and parts[6] else "96"
+    angle = parts[7] if len(parts) > 7 and parts[7] else "-28"
+    spacing_x = parts[8] if len(parts) > 8 and parts[8] else "220"
+    spacing_y = parts[9] if len(parts) > 9 and parts[9] else "160"
+    return {
+        "text": text,
+        "x": x,
+        "y": y,
+        "fill": fill,
+        "size": size,
+        "stroke_width": stroke_width,
+        "opacity": opacity,
+        "angle": angle,
+        "spacing_x": spacing_x,
+        "spacing_y": spacing_y,
+    }
 
 
 BuilderFn = Callable[[str], TransformationSpec]

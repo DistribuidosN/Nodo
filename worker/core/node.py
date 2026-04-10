@@ -5,6 +5,7 @@ import contextlib
 import logging
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TypedDict
 
 from worker.config import WorkerConfig
@@ -85,7 +86,7 @@ class WorkerNode:
         self._result_waiters: dict[str, list[asyncio.Future[ExecutionResultRecord]]] = {}
         self._task_lock = asyncio.Lock()
         self._storage = StorageClient.from_config(config)
-        self._state_root_uri = self._build_state_root_uri()
+        self._state_root_uri = str(config.state_dir)
         self._state_store = StateStore(self._storage, self._state_root_uri)
         self._pending_store = PendingTaskStore(self._storage, self._state_root_uri)
         self._latest_health = NodeHealth(
@@ -118,12 +119,12 @@ class WorkerNode:
         )
 
     async def start(self) -> None:
-        self._validate_storage_requirements()
+        self._config.input_dir.mkdir(parents=True, exist_ok=True)
         self._config.output_dir.mkdir(parents=True, exist_ok=True)
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         self._restore_completed_state()
         await self._restore_pending_tasks()
-        # Start Prometheus metrics server (disable by setting WORKER_METRICS_PORT=0)
+        # Start metrics server (disable by setting WORKER_METRICS_PORT=0)
         if self._config.metrics_port > 0:
             self._metrics.start_server(self._config.metrics_host, self._config.metrics_port)
         # Start HTTP health check server (disable by setting WORKER_HEALTH_PORT=0)
@@ -177,6 +178,18 @@ class WorkerNode:
             ):
                 self._metrics.tasks_rejected.inc()
                 return self._submit_reply(False, False, task.task_id, TaskState.REJECTED, 0, "insufficient memory headroom for large image")
+            try:
+                self._materialize_task_input(task)
+            except Exception as exc:
+                self._metrics.tasks_rejected.inc()
+                return self._submit_reply(
+                    False,
+                    False,
+                    task.task_id,
+                    TaskState.REJECTED,
+                    0,
+                    f"unable to stage input locally: {exc}",
+                )
 
             self._estimator.estimate(task)
             task.metadata["node_id"] = self._config.node_id
@@ -534,10 +547,17 @@ class WorkerNode:
             if task.idempotency_key in self._idempotency_index:
                 self._pending_store.remove(task.task_id)
                 continue
+            try:
+                self._materialize_task_input(task)
+            except Exception:
+                self._logger.exception("failed to restore pending task input", extra={"task_id": task.task_id})
+                self._pending_store.remove(task.task_id)
+                continue
             task.metadata["node_id"] = self._config.node_id
             task.enqueued_at_monotonic = time.monotonic()
             self._tasks[task.task_id] = task
             self._idempotency_index[task.idempotency_key] = task.task_id
+            self._pending_store.upsert(task)
             await self._queue.enqueue(task)
 
     def _submit_reply(
@@ -558,22 +578,32 @@ class WorkerNode:
             "reason": reason,
         }
 
-    def _build_state_root_uri(self) -> str:
-        if self._config.state_uri_prefix:
-            return self._storage.join(self._config.state_uri_prefix, self._config.node_id)
-        return str(self._config.state_dir)
+    def _materialize_task_input(self, task: Task) -> None:
+        if task.input_image.payload is None and task.input_image.input_uri is None and task.input_image.input_path:
+            existing_path = Path(task.input_image.input_path)
+            staged_path = self._config.input_dir / existing_path.name
+            if existing_path.resolve() == staged_path.resolve():
+                return
 
-    def _validate_storage_requirements(self) -> None:
-        if not self._config.require_shared_storage:
+        input_bytes: bytes | None = task.input_image.payload
+        input_format = (task.input_image.image_format or "").lower() or None
+        if input_bytes is None and task.input_image.input_path:
+            source_path = Path(task.input_image.input_path)
+            input_bytes = source_path.read_bytes()
+            input_format = input_format or source_path.suffix.lstrip(".").lower() or None
+        if input_bytes is None and task.input_image.input_uri:
+            input_bytes = self._storage.read_bytes(task.input_image.input_uri)
+            input_format = input_format or Path(task.input_image.input_uri).suffix.lstrip(".").lower() or None
+        if input_bytes is None:
             return
-        if not self._config.state_uri_prefix:
-            raise RuntimeError("shared storage is required: WORKER_STATE_URI_PREFIX must be configured")
-        if not self._config.output_uri_prefix:
-            raise RuntimeError("shared storage is required: WORKER_OUTPUT_URI_PREFIX must be configured")
-        if "://" not in self._config.state_uri_prefix or self._config.state_uri_prefix.startswith("file://"):
-            raise RuntimeError("shared storage is required: WORKER_STATE_URI_PREFIX must point to a remote URI")
-        if "://" not in self._config.output_uri_prefix or self._config.output_uri_prefix.startswith("file://"):
-            raise RuntimeError("shared storage is required: WORKER_OUTPUT_URI_PREFIX must point to a remote URI")
+        suffix = (input_format or "bin").strip(".")
+        staged_path = self._config.input_dir / f"{task.task_id}.{suffix}"
+        self._storage.write_bytes(str(staged_path), input_bytes)
+        task.input_image.input_path = str(staged_path)
+        task.input_image.input_uri = None
+        task.input_image.payload = None
+        task.input_image.image_format = input_format or task.input_image.image_format
+        task.input_image.size_bytes = len(input_bytes)
 
     def _trace_metadata(self, task: Task) -> dict[str, str]:
         metadata: dict[str, str] = {}

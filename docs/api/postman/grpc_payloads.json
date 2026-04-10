@@ -116,7 +116,7 @@
         ],
         "input": {
           "image_id": "image-1",
-          "input_uri": "s3://distributed-output/sample/pagina.png",
+          "content": "<BASE64_IMAGE_BYTES>",
           "format": "IMAGE_FORMAT_PNG"
         },
         "output_format": "IMAGE_FORMAT_PNG",

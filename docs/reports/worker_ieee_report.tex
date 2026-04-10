@@ -55,61 +55,89 @@ El alcance implementado cubre:
 \item control de admisión, backpressure y retries;
 \item persistencia durable de pendientes, resultados y eventos;
 \item OCR e inferencia mediante adaptadores configurables;
-\item despliegue con Docker, MinIO, Prometheus y Grafana.
+\item despliegue con Docker y almacenamiento local por nodo.
 \end{itemize}
 
 Quedaron fuera de alcance la autenticación de usuario final, la base de datos corporativa, la coordinación global del clúster y la lógica de negocio del sistema, ya que dichas responsabilidades pertenecen al servidor principal externo.
 
 \section{Arquitectura general}
-La Fig.~\ref{fig:architecture} resume la arquitectura final del subsistema. El servidor principal Java se conecta a los workers por gRPC. Los workers son los únicos componentes ejecutables de este repositorio. MinIO resuelve almacenamiento compartido y Prometheus/Grafana proveen observabilidad.
+La Fig.~\ref{fig:architecture} resume la arquitectura final del subsistema. El servidor principal Java se conecta a los workers por gRPC. Los workers son los únicos componentes ejecutables de este repositorio. Cada worker usa almacenamiento local para entradas, salidas y estado, y además expone métricas y healthchecks.
 
 \begin{figure*}[t]
 \centering
 \begin{tikzpicture}[
   font=\small,
-  app/.style={draw, rounded corners=4pt, thick, minimum width=4.0cm, minimum height=1.1cm, align=center, fill=blue!10},
-  worker/.style={draw, rounded corners=4pt, thick, minimum width=3.1cm, minimum height=1.15cm, align=center, fill=green!10},
-  sub/.style={draw, rounded corners=3pt, thick, minimum width=3.1cm, minimum height=0.7cm, align=center, fill=white},
-  store/.style={draw, rounded corners=4pt, thick, minimum width=4.2cm, minimum height=1cm, align=center, fill=orange!10},
-  legend/.style={draw, rounded corners=3pt, thick, fill=white, align=left, inner sep=5pt},
+  app/.style={draw, rounded corners=4pt, thick, minimum width=5.8cm, minimum height=1.1cm, align=center, fill=blue!10},
+  workerbox/.style={draw, rounded corners=5pt, thick, fill=green!8, text width=4.0cm, minimum height=4.9cm, align=left, inner sep=8pt},
+  note/.style={draw, rounded corners=4pt, thick, minimum width=15.2cm, minimum height=0.9cm, align=center, fill=orange!10},
+  labelbox/.style={fill=white, inner sep=2pt, align=center},
   control/.style={-{Latex[length=2.5mm]}, ultra thick, blue!70!black},
-  callback/.style={-{Latex[length=2.5mm]}, ultra thick, green!50!black},
-  sharedarrow/.style={-{Latex[length=2.3mm]}, thick, gray!70}
+  callback/.style={-{Latex[length=2.5mm]}, ultra thick, green!50!black}
 ]
-\node[app] (app) at (0,4.6) {Servidor principal Java\\auth + BD + lógica de negocio};
-\node[worker] (w1) at (-5.2,2.45) {Worker 1\\\texttt{127.0.0.1:50051}};
-\node[worker] (w2) at (0,2.45) {Worker 2\\\texttt{127.0.0.1:50061}};
-\node[worker] (w3) at (5.2,2.45) {Worker 3\\\texttt{127.0.0.1:50071}};
+\node[app] (app) at (0,5.0) {Servidor principal Java\\auth + BD + lógica de negocio};
 
-\node[sub] (w1q) at (-5.2,1.15) {Cola + scheduler + executor};
-\node[sub] (w2q) at (0,1.15) {Cola + scheduler + executor};
-\node[sub] (w3q) at (5.2,1.15) {Cola + scheduler + executor};
-
-\node[store] (storage) at (-2.6,-0.85) {Storage compartido\\filesystem, \texttt{file://}, \texttt{s3://}, MinIO};
-\node[store] (obs) at (3.7,-0.85) {Observabilidad\\Prometheus, Grafana, healthchecks};
-\node[legend, anchor=west] (lg) at (-7.05,-2.15) {
-\tikz{\draw[control] (0,0) -- (0.9,0);} RPCs desde el servidor principal: \texttt{ImageNodeService} y \texttt{WorkerControlService}\\
-\tikz{\draw[callback] (0,0) -- (0.9,0);} Callbacks opcionales del worker: \texttt{ReportProgress}, \texttt{ReportResult}, \texttt{Heartbeat}\\
-\tikz{\draw[sharedarrow] (0,0) -- (0.9,0);} Persistencia, resultados, métricas y healthchecks
+\node[workerbox] (w1) at (-5.2,1.6) {
+\textbf{Worker 1}\\
+\texttt{127.0.0.1:50051}\\[4pt]
+\textbf{Entrada gRPC}\\
+\texttt{ImageNodeService}\\
+\texttt{WorkerControlService}\\[4pt]
+\textbf{Ejecución local}\\
+Cola de prioridad + scheduler\\
+Executor de imágenes\\[4pt]
+\textbf{Storage local}\\
+\texttt{/app/data/input}\\
+\texttt{/app/data/output}\\
+\texttt{/app/data/state}\\[4pt]
+\textbf{Operación}\\
+\texttt{/livez}, \texttt{/readyz}, \texttt{/metrics}
 };
 
-\draw[control] ($(app.south)+(-0.85,0)$) to[out=-160,in=90] ($(w1.north)+(0.35,0)$);
-\draw[control] ($(app.south)+(0.0,0)$) -- ($(w2.north)+(0.0,0)$);
-\draw[control] ($(app.south)+(0.85,0)$) to[out=-20,in=90] ($(w3.north)+(-0.35,0)$);
+\node[workerbox] (w2) at (0,1.6) {
+\textbf{Worker 2}\\
+\texttt{127.0.0.1:50061}\\[4pt]
+\textbf{Entrada gRPC}\\
+\texttt{ImageNodeService}\\
+\texttt{WorkerControlService}\\[4pt]
+\textbf{Ejecución local}\\
+Cola de prioridad + scheduler\\
+Executor de imágenes\\[4pt]
+\textbf{Storage local}\\
+\texttt{/app/data/input}\\
+\texttt{/app/data/output}\\
+\texttt{/app/data/state}\\[4pt]
+\textbf{Operación}\\
+\texttt{/livez}, \texttt{/readyz}, \texttt{/metrics}
+};
 
-\draw[callback] ($(w1.north)+(-0.35,0)$) to[out=90,in=-160] ($(app.south)+(-1.65,0)$);
-\draw[callback] ($(w2.north)+(0.0,0)$) -- ($(app.south)+(0.0,0)$);
-\draw[callback] ($(w3.north)+(0.35,0)$) to[out=90,in=-20] ($(app.south)+(1.65,0)$);
+\node[workerbox] (w3) at (5.2,1.6) {
+\textbf{Worker 3}\\
+\texttt{127.0.0.1:50071}\\[4pt]
+\textbf{Entrada gRPC}\\
+\texttt{ImageNodeService}\\
+\texttt{WorkerControlService}\\[4pt]
+\textbf{Ejecución local}\\
+Cola de prioridad + scheduler\\
+Executor de imágenes\\[4pt]
+\textbf{Storage local}\\
+\texttt{/app/data/input}\\
+\texttt{/app/data/output}\\
+\texttt{/app/data/state}\\[4pt]
+\textbf{Operación}\\
+\texttt{/livez}, \texttt{/readyz}, \texttt{/metrics}
+};
 
-\draw[sharedarrow] (w1q.south) to[out=-80,in=145] (storage.north west);
-\draw[sharedarrow] (w2q.south) -- ($(storage.north)+(0.8,0)$);
-\draw[sharedarrow] (w3q.south) to[out=-100,in=35] (storage.north east);
+\node[note] (note) at (0,-2.15) {Cada worker procesa localmente, persiste en su propio disco y solo reporta progreso, resultados y salud al servidor principal.};
 
-\draw[sharedarrow] (w1.east) to[out=-18,in=160] (obs.west);
-\draw[sharedarrow] (w2.east) -- (obs.west);
-\draw[sharedarrow] (w3.south) -- ($(obs.north)+(1.05,0)$);
+\draw[control] ($(app.south)+(-1.55,0)$) to[out=-165,in=90] ($(w1.north)+(-0.35,0)$);
+\draw[control] ($(app.south)+(-0.30,0)$) -- node[labelbox, pos=0.55, right] {RPCs de negocio\\y control} ($(w2.north)+(-0.30,0)$);
+\draw[control] ($(app.south)+(1.00,0)$) to[out=-15,in=90] ($(w3.north)+(-0.35,0)$);
+
+\draw[callback] ($(w1.north)+(0.35,0)$) to[out=90,in=-165] ($(app.south)+(-0.55,0)$);
+\draw[callback] ($(w2.north)+(0.30,0)$) -- node[labelbox, pos=0.55, left] {Callbacks\\opcionales} ($(app.south)+(0.30,0)$);
+\draw[callback] ($(w3.north)+(0.35,0)$) to[out=90,in=-15] ($(app.south)+(1.85,0)$);
 \end{tikzpicture}
-\caption{Arquitectura final del subsistema. Azul: llamadas gRPC desde el servidor principal hacia los workers. Verde: callbacks opcionales del worker hacia el servidor principal. Gris: storage compartido, métricas y salud.}
+\caption{Arquitectura final del subsistema. El servidor principal envía solicitudes gRPC a los workers y puede recibir callbacks opcionales. Cada worker agrupa su entrada gRPC, cola local, scheduler, ejecución, storage local y endpoints operativos.}
 \label{fig:architecture}
 \end{figure*}
 
@@ -243,13 +271,13 @@ Adicionalmente, el worker integra dos extensiones por adaptador:
 \section{Observabilidad y despliegue}
 El subsistema expone:
 \begin{itemize}[leftmargin=*]
-\item métricas Prometheus por worker;
+\item métricas HTTP por worker;
 \item \texttt{/livez} y \texttt{/readyz};
 \item logs estructurados;
 \item tracing distribuido opcional con OpenTelemetry;
 \item mTLS opcional en ejecución local y activado en el stack Docker;
 \item despliegue local con \texttt{docker compose};
-\item tres instancias worker, MinIO, Prometheus y Grafana.
+\item tres instancias worker con volúmenes locales.
 \end{itemize}
 
 El estado de \texttt{/readyz} considera cola, memoria disponible y conectividad con el endpoint de callbacks solo si este fue configurado. En modo standalone, el worker puede quedar listo sin servidor principal embebido.

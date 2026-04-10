@@ -62,7 +62,7 @@ Este repositorio se concentra en el plano de ejecución:
 \begin{itemize}
 \item tres workers;
 \item interfaces gRPC para negocio y control;
-\item almacenamiento compartido opcional;
+\item almacenamiento local por nodo;
 \item métricas, healthchecks y seguridad.
 \end{itemize}
 
@@ -88,12 +88,12 @@ Scheduler & \texttt{worker/scheduler/*.py} & Prioridad, score y costo estimado \
 Ejecución & \texttt{worker/execution/*.py} & Procesamiento real, recursos y cancelación \\
 gRPC del worker & \texttt{worker/grpc/*.py} & Servidores, reporter y mapeos protobuf \\
 Persistencia worker & \texttt{state\_store.py} & Pendientes, resultados y spool durable \\
-Storage abstracto & \texttt{storage.py} & Local, \texttt{file://}, \texttt{http(s)} y \texttt{s3://} \\
+Storage abstracto & \texttt{storage.py} & Local, \texttt{file://} y \texttt{http(s)} de solo lectura \\
 Telemetría & \texttt{worker/telemetry/*.py} & Logs, métricas, tracing y salud \\
 OCR & \texttt{ocr\_backend.py} & OCR real con Tesseract \\
 Inferencia & \texttt{inference\_backend.py} & Inferencia real con modelo centroidal \\
 Seguridad & \texttt{security\_assets.py} & Generación de certificados y secretos \\
-Despliegue & \texttt{docker-compose.yml} & MinIO, tres workers, Prometheus y Grafana \\
+Despliegue & \texttt{docker-compose.yml} & Tres workers con almacenamiento local \\
 \bottomrule
 \end{longtable}
 
@@ -104,9 +104,9 @@ Despliegue & \texttt{docker-compose.yml} & MinIO, tres workers, Prometheus y Gra
 
 \textbf{Qué hace}
 \begin{itemize}
-\item levanta MinIO como storage compartido;
+\item materializa entradas, salidas y estado en disco local;
 \item levanta \texttt{worker1}, \texttt{worker2} y \texttt{worker3};
-\item levanta Prometheus y Grafana;
+\item usa almacenamiento local por nodo;
 \item inyecta certificados y secretos.
 \end{itemize}
 
@@ -120,15 +120,14 @@ Despliegue & \texttt{docker-compose.yml} & MinIO, tres workers, Prometheus y Gra
 \textbf{Qué entrega}
 \begin{itemize}
 \item un clúster local reproducible de workers;
-\item puertos públicos para gRPC, salud, métricas y consola MinIO.
+\item puertos públicos para gRPC, salud y métricas.
 \end{itemize}
 
 \textbf{Cómo se conecta}
 \begin{itemize}
-\item MinIO se usa para storage compartido;
+\item el almacenamiento del nodo es local y persistente en su propio volumen;
 \item los workers exponen gRPC por mTLS;
-\item Prometheus scrapea las métricas de cada worker;
-\item Grafana consume Prometheus.
+\item cada worker expone sus propias métricas y healthchecks.
 \end{itemize}
 
 \section{Worker}
@@ -141,7 +140,7 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 
 \textbf{Qué hace}
 \begin{itemize}
-\item carga puertos, límites, storage, TLS, tracing, OCR e inferencia;
+\item carga puertos, límites, almacenamiento local, TLS, tracing, OCR e inferencia;
 \item define si el worker reporta callbacks a un servidor principal externo;
 \item define límites duros de entrada.
 \end{itemize}
@@ -153,7 +152,7 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \item \texttt{WORKER\_MAX\_REQUEST\_BYTES};
 \item \texttt{WORKER\_MAX\_BATCH\_SIZE};
 \item \texttt{WORKER\_MAX\_IMAGE\_*};
-\item \texttt{WORKER\_STORAGE\_*}.
+\item \texttt{WORKER\_INPUT\_DIR}, \texttt{WORKER\_OUTPUT\_DIR} y \texttt{WORKER\_STATE\_DIR}.
 \end{itemize}
 
 \subsection{Orquestador interno}
@@ -182,7 +181,7 @@ Cada worker es un ejecutor especializado. Su responsabilidad es aceptar tareas, 
 \textbf{Salidas}
 \begin{itemize}
 \item decisiones de aceptación o rechazo;
-\item persistencia de estado local o compartido;
+\item persistencia de estado local;
 \item callbacks al servidor principal si existe endpoint configurado.
 \end{itemize}
 
@@ -329,7 +328,7 @@ Las operaciones costosas integradas fueron implementadas de manera cooperativa, 
 \begin{itemize}
 \item unifica acceso a distintos backends;
 \item lee, escribe, lista y borra URIs;
-\item soporta local, \texttt{file://}, \texttt{http(s)} y \texttt{s3://}.
+\item soporta local, \texttt{file://} y \texttt{http(s)} para lectura externa.
 \end{itemize}
 
 \subsection{Persistencia del worker}
@@ -452,7 +451,7 @@ Si no se configuró \texttt{WORKER\_COORDINATOR\_TARGET}, el reporter queda desa
 
 \textbf{Qué hace}
 \begin{itemize}
-\item expone métricas Prometheus;
+\item expone métricas HTTP por worker;
 \item mide cola, latencias, retries, tareas activas y conectividad.
 \end{itemize}
 
@@ -517,7 +516,7 @@ Si no se configuró \texttt{WORKER\_COORDINATOR\_TARGET}, el reporter queda desa
 \begin{itemize}
 \item crea una CA de desarrollo;
 \item genera certificados para workers, servidor principal de ejemplo y cliente demo;
-\item genera secretos de acceso para MinIO.
+\item prepara certificados y llaves para TLS/mTLS de desarrollo.
 \end{itemize}
 
 \section{Scripts y herramientas}
@@ -590,7 +589,7 @@ Si necesitas resumir el sistema oralmente, estas son las ideas más importantes:
 \item el servidor principal Java coordina y los workers ejecutan;
 \item este repo no maneja auth ni BD de negocio;
 \item cada worker tiene cola local con prioridad, backpressure y persistencia;
-\item el sistema usa gRPC, mTLS, MinIO, Prometheus y Grafana;
+\item el sistema usa gRPC, mTLS y almacenamiento local por nodo;
 \item el worker soporta OCR e inferencia reales mediante adaptadores.
 \end{itemize}
 
