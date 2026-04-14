@@ -3,10 +3,7 @@
 import grpc
 import warnings
 
-try:
-    from . import imagenode_pb2 as imagenode__pb2
-except ImportError:  # pragma: no cover - fallback for direct execution
-    import imagenode_pb2 as imagenode__pb2
+from proto import imagenode_pb2 as proto_dot_imagenode__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
@@ -21,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in imagenode_pb2_grpc.py depends on'
+        + ' but the generated code in proto/imagenode_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -39,58 +36,58 @@ class ImageNodeServiceStub(object):
         """
         self.ProcessToPath = channel.unary_unary(
                 '/imagenode.ImageNodeService/ProcessToPath',
-                request_serializer=imagenode__pb2.ProcessRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.PathResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.ProcessRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.PathResponse.FromString,
                 _registered_method=True)
         self.ProcessToData = channel.unary_unary(
                 '/imagenode.ImageNodeService/ProcessToData',
-                request_serializer=imagenode__pb2.ProcessRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.DataResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.ProcessRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.DataResponse.FromString,
                 _registered_method=True)
         self.HealthCheck = channel.unary_unary(
                 '/imagenode.ImageNodeService/HealthCheck',
-                request_serializer=imagenode__pb2.EmptyRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.HealthCheckResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.HealthCheckResponse.FromString,
                 _registered_method=True)
         self.GetMetrics = channel.unary_unary(
                 '/imagenode.ImageNodeService/GetMetrics',
-                request_serializer=imagenode__pb2.EmptyRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.MetricsResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.MetricsResponse.FromString,
                 _registered_method=True)
         self.UploadLargeImage = channel.stream_unary(
                 '/imagenode.ImageNodeService/UploadLargeImage',
-                request_serializer=imagenode__pb2.ImageChunk.SerializeToString,
-                response_deserializer=imagenode__pb2.DataResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.ImageChunk.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.DataResponse.FromString,
                 _registered_method=True)
         self.StreamBatchProcess = channel.stream_stream(
                 '/imagenode.ImageNodeService/StreamBatchProcess',
-                request_serializer=imagenode__pb2.ProcessRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.DataResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.ProcessRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.DataResponse.FromString,
                 _registered_method=True)
         self.GetProcessedFilePaths = channel.unary_unary(
                 '/imagenode.ImageNodeService/GetProcessedFilePaths',
-                request_serializer=imagenode__pb2.EmptyRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.PathListResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.PathListResponse.FromString,
                 _registered_method=True)
         self.FindPathByName = channel.unary_unary(
                 '/imagenode.ImageNodeService/FindPathByName',
-                request_serializer=imagenode__pb2.FileNameRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.PathResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.FileNameRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.PathResponse.FromString,
                 _registered_method=True)
         self.GetProcessedImages = channel.unary_unary(
                 '/imagenode.ImageNodeService/GetProcessedImages',
-                request_serializer=imagenode__pb2.EmptyRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.DataListResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.DataListResponse.FromString,
                 _registered_method=True)
         self.FindImageByName = channel.unary_unary(
                 '/imagenode.ImageNodeService/FindImageByName',
-                request_serializer=imagenode__pb2.FileNameRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.DataResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.FileNameRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.DataResponse.FromString,
                 _registered_method=True)
         self.ProcessBatch = channel.unary_unary(
                 '/imagenode.ImageNodeService/ProcessBatch',
-                request_serializer=imagenode__pb2.BatchRequest.SerializeToString,
-                response_deserializer=imagenode__pb2.BatchDataResponse.FromString,
+                request_serializer=proto_dot_imagenode__pb2.BatchRequest.SerializeToString,
+                response_deserializer=proto_dot_imagenode__pb2.BatchDataResponse.FromString,
                 _registered_method=True)
 
 
@@ -168,58 +165,58 @@ def add_ImageNodeServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'ProcessToPath': grpc.unary_unary_rpc_method_handler(
                     servicer.ProcessToPath,
-                    request_deserializer=imagenode__pb2.ProcessRequest.FromString,
-                    response_serializer=imagenode__pb2.PathResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.ProcessRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.PathResponse.SerializeToString,
             ),
             'ProcessToData': grpc.unary_unary_rpc_method_handler(
                     servicer.ProcessToData,
-                    request_deserializer=imagenode__pb2.ProcessRequest.FromString,
-                    response_serializer=imagenode__pb2.DataResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.ProcessRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.DataResponse.SerializeToString,
             ),
             'HealthCheck': grpc.unary_unary_rpc_method_handler(
                     servicer.HealthCheck,
-                    request_deserializer=imagenode__pb2.EmptyRequest.FromString,
-                    response_serializer=imagenode__pb2.HealthCheckResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.EmptyRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.HealthCheckResponse.SerializeToString,
             ),
             'GetMetrics': grpc.unary_unary_rpc_method_handler(
                     servicer.GetMetrics,
-                    request_deserializer=imagenode__pb2.EmptyRequest.FromString,
-                    response_serializer=imagenode__pb2.MetricsResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.EmptyRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.MetricsResponse.SerializeToString,
             ),
             'UploadLargeImage': grpc.stream_unary_rpc_method_handler(
                     servicer.UploadLargeImage,
-                    request_deserializer=imagenode__pb2.ImageChunk.FromString,
-                    response_serializer=imagenode__pb2.DataResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.ImageChunk.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.DataResponse.SerializeToString,
             ),
             'StreamBatchProcess': grpc.stream_stream_rpc_method_handler(
                     servicer.StreamBatchProcess,
-                    request_deserializer=imagenode__pb2.ProcessRequest.FromString,
-                    response_serializer=imagenode__pb2.DataResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.ProcessRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.DataResponse.SerializeToString,
             ),
             'GetProcessedFilePaths': grpc.unary_unary_rpc_method_handler(
                     servicer.GetProcessedFilePaths,
-                    request_deserializer=imagenode__pb2.EmptyRequest.FromString,
-                    response_serializer=imagenode__pb2.PathListResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.EmptyRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.PathListResponse.SerializeToString,
             ),
             'FindPathByName': grpc.unary_unary_rpc_method_handler(
                     servicer.FindPathByName,
-                    request_deserializer=imagenode__pb2.FileNameRequest.FromString,
-                    response_serializer=imagenode__pb2.PathResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.FileNameRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.PathResponse.SerializeToString,
             ),
             'GetProcessedImages': grpc.unary_unary_rpc_method_handler(
                     servicer.GetProcessedImages,
-                    request_deserializer=imagenode__pb2.EmptyRequest.FromString,
-                    response_serializer=imagenode__pb2.DataListResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.EmptyRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.DataListResponse.SerializeToString,
             ),
             'FindImageByName': grpc.unary_unary_rpc_method_handler(
                     servicer.FindImageByName,
-                    request_deserializer=imagenode__pb2.FileNameRequest.FromString,
-                    response_serializer=imagenode__pb2.DataResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.FileNameRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.DataResponse.SerializeToString,
             ),
             'ProcessBatch': grpc.unary_unary_rpc_method_handler(
                     servicer.ProcessBatch,
-                    request_deserializer=imagenode__pb2.BatchRequest.FromString,
-                    response_serializer=imagenode__pb2.BatchDataResponse.SerializeToString,
+                    request_deserializer=proto_dot_imagenode__pb2.BatchRequest.FromString,
+                    response_serializer=proto_dot_imagenode__pb2.BatchDataResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -247,8 +244,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/ProcessToPath',
-            imagenode__pb2.ProcessRequest.SerializeToString,
-            imagenode__pb2.PathResponse.FromString,
+            proto_dot_imagenode__pb2.ProcessRequest.SerializeToString,
+            proto_dot_imagenode__pb2.PathResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -274,8 +271,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/ProcessToData',
-            imagenode__pb2.ProcessRequest.SerializeToString,
-            imagenode__pb2.DataResponse.FromString,
+            proto_dot_imagenode__pb2.ProcessRequest.SerializeToString,
+            proto_dot_imagenode__pb2.DataResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -301,8 +298,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/HealthCheck',
-            imagenode__pb2.EmptyRequest.SerializeToString,
-            imagenode__pb2.HealthCheckResponse.FromString,
+            proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+            proto_dot_imagenode__pb2.HealthCheckResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -328,8 +325,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/GetMetrics',
-            imagenode__pb2.EmptyRequest.SerializeToString,
-            imagenode__pb2.MetricsResponse.FromString,
+            proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+            proto_dot_imagenode__pb2.MetricsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -355,8 +352,8 @@ class ImageNodeService(object):
             request_iterator,
             target,
             '/imagenode.ImageNodeService/UploadLargeImage',
-            imagenode__pb2.ImageChunk.SerializeToString,
-            imagenode__pb2.DataResponse.FromString,
+            proto_dot_imagenode__pb2.ImageChunk.SerializeToString,
+            proto_dot_imagenode__pb2.DataResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -382,8 +379,8 @@ class ImageNodeService(object):
             request_iterator,
             target,
             '/imagenode.ImageNodeService/StreamBatchProcess',
-            imagenode__pb2.ProcessRequest.SerializeToString,
-            imagenode__pb2.DataResponse.FromString,
+            proto_dot_imagenode__pb2.ProcessRequest.SerializeToString,
+            proto_dot_imagenode__pb2.DataResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -409,8 +406,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/GetProcessedFilePaths',
-            imagenode__pb2.EmptyRequest.SerializeToString,
-            imagenode__pb2.PathListResponse.FromString,
+            proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+            proto_dot_imagenode__pb2.PathListResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -436,8 +433,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/FindPathByName',
-            imagenode__pb2.FileNameRequest.SerializeToString,
-            imagenode__pb2.PathResponse.FromString,
+            proto_dot_imagenode__pb2.FileNameRequest.SerializeToString,
+            proto_dot_imagenode__pb2.PathResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -463,8 +460,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/GetProcessedImages',
-            imagenode__pb2.EmptyRequest.SerializeToString,
-            imagenode__pb2.DataListResponse.FromString,
+            proto_dot_imagenode__pb2.EmptyRequest.SerializeToString,
+            proto_dot_imagenode__pb2.DataListResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -490,8 +487,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/FindImageByName',
-            imagenode__pb2.FileNameRequest.SerializeToString,
-            imagenode__pb2.DataResponse.FromString,
+            proto_dot_imagenode__pb2.FileNameRequest.SerializeToString,
+            proto_dot_imagenode__pb2.DataResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -517,8 +514,8 @@ class ImageNodeService(object):
             request,
             target,
             '/imagenode.ImageNodeService/ProcessBatch',
-            imagenode__pb2.BatchRequest.SerializeToString,
-            imagenode__pb2.BatchDataResponse.FromString,
+            proto_dot_imagenode__pb2.BatchRequest.SerializeToString,
+            proto_dot_imagenode__pb2.BatchDataResponse.FromString,
             options,
             channel_credentials,
             insecure,

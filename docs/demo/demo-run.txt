@@ -1,7 +1,0 @@
-target=127.0.0.1:50052
-health_alive=True health_ready=True node_id=coordinator-2
-single_success=True result_path=/app/data/output/d1fc471a-b51d-4a24-9dda-6082af53da8b.png bytes=2791
-batch_all_success=True batch_count=2
-saved_input=demo-input.png
-saved_output=demo-output.png
-saved_batch_outputs=demo-batch-1.webp,demo-batch-2.jpeg

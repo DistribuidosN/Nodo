@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("install", "protos", "dev-stack", "dev-down", "worker-stack", "worker-down", "test", "demo")]
+    [ValidateSet("install", "protos", "dev-stack", "dev-down", "worker-stack", "worker-down", "test", "demo", "compare-batch")]
     [string]$Command = "worker-stack"
 )
 
@@ -42,6 +42,11 @@ switch ($Command) {
     "demo" {
         Invoke-Step "Ejecutando demo contra worker1" {
             python scripts/demo/demo_end_to_end.py --target 127.0.0.1:50051 --output-dir docs/demo --ca .secrets/pki/root-ca.crt --cert .secrets/pki/demo-client.crt --key .secrets/pki/demo-client.key --server-name worker.service
+        }
+    }
+    "compare-batch" {
+        Invoke-Step "Comparando el mismo batch contra worker1, worker2 y worker3" {
+            python examples/compare_workers_batch.py --output-root results --ca .secrets/pki/root-ca.crt --cert .secrets/pki/demo-client.crt --key .secrets/pki/demo-client.key --server-name worker.service
         }
     }
 }

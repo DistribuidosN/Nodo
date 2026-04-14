@@ -43,35 +43,39 @@ Empieza por estos archivos:
 4. [worker/grpc/worker_control_service.py](worker/grpc/worker_control_service.py)
 5. [worker/execution](worker/execution)
 
-Arbol principal:
+Arbol principal que conviene conservar:
 
 ```text
 worker/
-  server.py
-  config.py
-  core/
-  execution/
-  grpc/
-  models/
-  scheduler/
-  telemetry/
 proto/
-docs/
-  api/
-  demo/
-  reference/
-  reports/
 scripts/
-  backends/
-  demo/
-  dev/
-  ops/
 examples/
 tests/
+docs/
+  api/
+  reports/
 ```
 
 Los archivos con nombres viejos se mantienen por compatibilidad, pero los
 modulos anteriores son los nombres canonicos para leer y mantener el proyecto.
+
+Carpetas que se generan localmente y se pueden borrar sin afectar el codigo:
+
+- `data/`
+- `results/`
+- `output/`
+- `tmp/`
+- `.run/`
+- `.secrets/`
+- `.pytest_cache/`
+- `.pytest_tmp/`
+
+Artefactos de demo generados:
+
+- `docs/demo/demo-*`
+
+El archivo [docs/demo/batch-image-list.txt](docs/demo/batch-image-list.txt)
+si se conserva porque define el lote usado para comparar los tres workers.
 
 ## Modos de despliegue
 
@@ -233,6 +237,45 @@ Eso es util para operacion, pruebas o integracion, pero la responsabilidad de
 guardar historicos, persistir metricas y construir graficas debe quedar del
 lado del servidor principal o su storage/BD.
 
+## Costo heuristico por filtro para la cola
+
+La cola local penaliza tareas mas costosas usando un peso base por filtro.
+Ese valor no reemplaza la prioridad funcional, pero si ayuda a ordenar mejor
+la ejecucion cuando entran trabajos heterogeneos.
+
+Valores base actuales:
+
+- `grayscale`: `0.35`
+- `resize`: `0.95`
+- `crop`: `0.25`
+- `rotate`: `0.65`
+- `flip`: `0.20`
+- `blur`: `1.30`
+- `sharpen`: `1.00`
+- `brightness` / `contrast` / `brightness_contrast`: `0.60`
+- `watermark_text`: `1.10`
+- `format`: `0.30`
+- `ocr`: `3.20`
+- `inference`: `3.80`
+
+Valores explicitos para conversion por formato destino:
+
+- `format:jpg` / `format:jpeg`: `0.300`
+- `format:bmp`: `0.255`
+- `format:png`: `0.315`
+- `format:tif` / `format:tiff`: `0.345`
+- `format:ico`: `0.360`
+- `format:webp`: `0.375`
+- `format:gif`: `0.405`
+
+Ajustes dinamicos importantes:
+
+- `resize` sube mas si hace upscale y baja un poco si hace downscale.
+- `rotate` cuesta menos en `90/180/270` que en angulos arbitrarios.
+- `blur`, `sharpen` y `brightness_contrast` suben segun intensidad.
+- `watermark_text` sube segun tamano y longitud del texto.
+- `format` sube para formatos mas pesados como `webp`, `gif` o `ico`.
+
 ## Storage local del nodo
 
 Cada worker materializa las entradas y salidas en disco local:
@@ -268,6 +311,9 @@ propio lado despues de recibir el reporte o el resultado.
 
 - `.\run.ps1 dev-down`
   Baja el entorno local completo.
+
+- `.\run.ps1 compare-batch`
+  Compara el mismo lote de imagenes contra `worker1`, `worker2` y `worker3`.
 
 - `.\run.ps1 test`
   Ejecuta los tests.
