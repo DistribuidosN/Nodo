@@ -322,3 +322,39 @@ async def test_worker_pulls_task_from_orchestrator_and_submits_result(tmp_path):
 
     await node.close()
     await coordinator_server.stop(grace=3)
+
+
+@pytest.mark.asyncio
+async def test_worker_pulls_blur_task_from_orchestrator_and_submits_result(tmp_path):
+    coordinator_port = free_port()
+    metrics_port = free_port()
+    health_port = free_port()
+    coordinator = MockCoordinator()
+    coordinator.pulled_tasks.append(
+        orchestrator_pb2.ImageTask(
+            task_id="pulled-blur-task",
+            image_data=build_payload(),
+            filename="pulled-blur.png",
+            filter_type="blur",
+            enqueue_ts=int(datetime.now(tz=UTC).timestamp() * 1000),
+            priority=1,
+        )
+    )
+
+    coordinator_server = grpc.aio.server()
+    orchestrator_pb2_grpc.add_OrchestratorServicer_to_server(coordinator, coordinator_server)
+    coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
+    await coordinator_server.start()
+
+    config = build_config(tmp_path, free_port(), coordinator_port, metrics_port, health_port)
+    node = WorkerNode(config=config, metrics=WorkerMetrics())
+    await node.start()
+
+    await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
+    result = coordinator.results[-1]
+    assert result.task_id == "pulled-blur-task"
+    assert result.success is True
+    assert result.result_data
+
+    await node.close()
+    await coordinator_server.stop(grace=3)

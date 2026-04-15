@@ -6,6 +6,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _load_dotenv_if_present() -> None:
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        os.environ[key] = value
+
+
 def _get_int(name: str, default: int) -> int:
     value = os.getenv(name)
     return int(value) if value is not None else default
@@ -84,6 +102,7 @@ class WorkerConfig:
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
+        _load_dotenv_if_present()
         cpu_count = os.cpu_count() or 4
         max_active = _get_int("WORKER_MAX_ACTIVE_TASKS", max(2, cpu_count))
         process_workers = _get_int("WORKER_PROCESS_POOL", max(1, cpu_count - 1))

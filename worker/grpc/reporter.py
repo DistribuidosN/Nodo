@@ -360,17 +360,20 @@ class CoordinatorReporter:
     def _filters_from_image_task(self, image_task: Any) -> list[str]:
         filter_type = str(image_task.filter_type or "").strip().lower()
         filters: list[str] = []
+        simple_filter_map = {
+            "grayscale": "grayscale",
+            "blur": "blur",
+            "ocr": "ocr",
+            "inference": "inference",
+        }
+
         if filter_type in {"", "none"}:
             pass
         elif filter_type == "thumbnail":
             if int(image_task.target_width) <= 0 or int(image_task.target_height) <= 0:
                 raise ValueError("thumbnail task requires target_width and target_height")
-        elif filter_type == "grayscale":
-            filters.append("grayscale")
-        elif filter_type == "ocr":
-            filters.append("ocr")
-        elif filter_type == "inference":
-            filters.append("inference")
+        elif filter_type in simple_filter_map:
+            filters.append(simple_filter_map[filter_type])
         else:
             raise ValueError(f"unsupported orchestrator filter_type '{filter_type}'")
 
