@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,13 @@ def _load_dotenv_if_present() -> None:
         if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
         os.environ[key] = value
+
+
+def _default_backend_command(script_name: str) -> str | None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "backends" / script_name
+    if not script_path.exists():
+        return None
+    return json.dumps([sys.executable, str(script_path)])
 
 
 def _get_int(name: str, default: int) -> int:
@@ -151,8 +160,8 @@ class WorkerConfig:
             max_image_width=_get_int("WORKER_MAX_IMAGE_WIDTH", 12_000),
             max_image_height=_get_int("WORKER_MAX_IMAGE_HEIGHT", 12_000),
             max_image_pixels=_get_int("WORKER_MAX_IMAGE_PIXELS", 40_000_000),
-            ocr_command=os.getenv("WORKER_OCR_COMMAND"),
-            inference_command=os.getenv("WORKER_INFERENCE_COMMAND"),
+            ocr_command=os.getenv("WORKER_OCR_COMMAND") or _default_backend_command("ocr_backend.py"),
+            inference_command=os.getenv("WORKER_INFERENCE_COMMAND") or _default_backend_command("inference_backend.py"),
             adapter_timeout_seconds=_get_float("WORKER_ADAPTER_TIMEOUT_SECONDS", 30.0),
             grpc_server_cert_file=os.getenv("WORKER_GRPC_SERVER_CERT_FILE"),
             grpc_server_key_file=os.getenv("WORKER_GRPC_SERVER_KEY_FILE"),
