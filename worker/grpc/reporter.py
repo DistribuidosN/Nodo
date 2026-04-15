@@ -185,7 +185,7 @@ class CoordinatorReporter:
                 started = time.perf_counter()
                 with MAYBE_SPAN("worker.callback.heartbeat", attributes={"worker.callback.kind": "heartbeat"}):
                     await stub.SendHeartbeat(
-                        PROTO.OrchestratorHeartbeatRequest(
+                        PROTO.HeartbeatRequest(
                             node_id=status.node_id,
                             ip_address=self._ip_address,
                             metrics=await self._build_node_metrics(status),

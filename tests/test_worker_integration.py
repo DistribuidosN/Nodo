@@ -83,7 +83,7 @@ class MockCoordinator(orchestrator_pb2_grpc.OrchestratorServicer):
         self.results: list[orchestrator_pb2.TaskResult] = []
         self.progress_metadata: list[tuple[tuple[str, str], ...]] = []
         self.result_metadata: list[tuple[tuple[str, str], ...]] = []
-        self.heartbeats: list[orchestrator_pb2.OrchestratorHeartbeatRequest] = []
+        self.heartbeats: list[orchestrator_pb2.HeartbeatRequest] = []
         self.pull_requests: list[orchestrator_pb2.PullRequest] = []
         self.pulled_tasks: list[orchestrator_pb2.ImageTask] = []
         self.result_event = asyncio.Event()

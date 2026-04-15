@@ -178,11 +178,11 @@ message ReportAck {
   string message = 2;
 }
 
-message HeartbeatRequest {
+message CoordinatorHeartbeatRequest {
   NodeStatus status = 1;
 }
 
-message HeartbeatReply {
+message CoordinatorHeartbeatReply {
   bool accepted = 1;
   string message = 2;
   google.protobuf.Timestamp coordinator_time = 3;
@@ -199,5 +199,5 @@ service WorkerControlService {
 service CoordinatorCallbackService {
   rpc ReportProgress(ProgressEvent) returns (ReportAck);
   rpc ReportResult(ExecutionResult) returns (ReportAck);
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply);
+  rpc Heartbeat(CoordinatorHeartbeatRequest) returns (CoordinatorHeartbeatReply);
 }

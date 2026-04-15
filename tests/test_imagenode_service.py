@@ -88,7 +88,7 @@ class MockCoordinator(worker_node_pb2_grpc.CoordinatorCallbackServiceServicer):
         return worker_node_pb2.ReportAck(accepted=True, message="ok")
 
     async def Heartbeat(self, request, context):
-        return worker_node_pb2.HeartbeatReply(accepted=True, message="ok")
+        return worker_node_pb2.CoordinatorHeartbeatReply(accepted=True, message="ok")
 
 
 @pytest.mark.asyncio

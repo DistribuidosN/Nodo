@@ -290,8 +290,8 @@ class CoordinatorCallbackServiceStub(object):
                 _registered_method=True)
         self.Heartbeat = channel.unary_unary(
                 '/worker.CoordinatorCallbackService/Heartbeat',
-                request_serializer=proto_dot_worker__node__pb2.HeartbeatRequest.SerializeToString,
-                response_deserializer=proto_dot_worker__node__pb2.HeartbeatReply.FromString,
+                request_serializer=proto_dot_worker__node__pb2.CoordinatorHeartbeatRequest.SerializeToString,
+                response_deserializer=proto_dot_worker__node__pb2.CoordinatorHeartbeatReply.FromString,
                 _registered_method=True)
 
 
@@ -331,8 +331,8 @@ def add_CoordinatorCallbackServiceServicer_to_server(servicer, server):
             ),
             'Heartbeat': grpc.unary_unary_rpc_method_handler(
                     servicer.Heartbeat,
-                    request_deserializer=proto_dot_worker__node__pb2.HeartbeatRequest.FromString,
-                    response_serializer=proto_dot_worker__node__pb2.HeartbeatReply.SerializeToString,
+                    request_deserializer=proto_dot_worker__node__pb2.CoordinatorHeartbeatRequest.FromString,
+                    response_serializer=proto_dot_worker__node__pb2.CoordinatorHeartbeatReply.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -414,8 +414,8 @@ class CoordinatorCallbackService(object):
             request,
             target,
             '/worker.CoordinatorCallbackService/Heartbeat',
-            proto_dot_worker__node__pb2.HeartbeatRequest.SerializeToString,
-            proto_dot_worker__node__pb2.HeartbeatReply.FromString,
+            proto_dot_worker__node__pb2.CoordinatorHeartbeatRequest.SerializeToString,
+            proto_dot_worker__node__pb2.CoordinatorHeartbeatReply.FromString,
             options,
             channel_credentials,
             insecure,

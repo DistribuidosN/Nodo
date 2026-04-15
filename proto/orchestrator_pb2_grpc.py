@@ -26,7 +26,12 @@ if _version_not_supported:
 
 
 class OrchestratorStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """═══════════════════════════════════════════════════════════════════════════
+    SERVICIOS
+    ═══════════════════════════════════════════════════════════════════════════
+
+    ── Expuesto por el Servidor Java (Orquestador) ───────────────────────────────
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -56,7 +61,7 @@ class OrchestratorStub(object):
                 _registered_method=True)
         self.SendHeartbeat = channel.unary_unary(
                 '/worker.Orchestrator/SendHeartbeat',
-                request_serializer=proto_dot_orchestrator__pb2.OrchestratorHeartbeatRequest.SerializeToString,
+                request_serializer=proto_dot_orchestrator__pb2.HeartbeatRequest.SerializeToString,
                 response_deserializer=proto_dot_orchestrator__pb2.Ack.FromString,
                 _registered_method=True)
         self.GetQueueStatus = channel.unary_unary(
@@ -72,46 +77,58 @@ class OrchestratorStub(object):
 
 
 class OrchestratorServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """═══════════════════════════════════════════════════════════════════════════
+    SERVICIOS
+    ═══════════════════════════════════════════════════════════════════════════
+
+    ── Expuesto por el Servidor Java (Orquestador) ───────────────────────────────
+    """
 
     def PullTasks(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """A2WS PULL: el nodo pide trabajo cuando tiene slots libres
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def SubmitResult(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """El nodo entrega el resultado de una imagen procesada
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def StealTasks(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """El nodo solicita robar tareas de otro nodo (orquestador arbitra)
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def UpdateTaskProgress(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """El nodo reporta progreso de una tarea en curso (UI en tiempo real)
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def SendHeartbeat(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Heartbeat: "sigo vivo"; si falla 3 veces → re-encolar sus tareas
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetQueueStatus(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Estado completo de colas (para dashboard / decisiones A2WS)
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def WatchQueue(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Stream: el orquestador empuja actualizaciones a quien esté suscrito
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -141,7 +158,7 @@ def add_OrchestratorServicer_to_server(servicer, server):
             ),
             'SendHeartbeat': grpc.unary_unary_rpc_method_handler(
                     servicer.SendHeartbeat,
-                    request_deserializer=proto_dot_orchestrator__pb2.OrchestratorHeartbeatRequest.FromString,
+                    request_deserializer=proto_dot_orchestrator__pb2.HeartbeatRequest.FromString,
                     response_serializer=proto_dot_orchestrator__pb2.Ack.SerializeToString,
             ),
             'GetQueueStatus': grpc.unary_unary_rpc_method_handler(
@@ -163,7 +180,12 @@ def add_OrchestratorServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class Orchestrator(object):
-    """Missing associated documentation comment in .proto file."""
+    """═══════════════════════════════════════════════════════════════════════════
+    SERVICIOS
+    ═══════════════════════════════════════════════════════════════════════════
+
+    ── Expuesto por el Servidor Java (Orquestador) ───────────────────────────────
+    """
 
     @staticmethod
     def PullTasks(request,
@@ -288,7 +310,7 @@ class Orchestrator(object):
             request,
             target,
             '/worker.Orchestrator/SendHeartbeat',
-            proto_dot_orchestrator__pb2.OrchestratorHeartbeatRequest.SerializeToString,
+            proto_dot_orchestrator__pb2.HeartbeatRequest.SerializeToString,
             proto_dot_orchestrator__pb2.Ack.FromString,
             options,
             channel_credentials,
@@ -356,7 +378,8 @@ class Orchestrator(object):
 
 
 class WorkerNodeStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """── Expuesto por cada Nodo Python ─────────────────────────────────────────────
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -377,16 +400,19 @@ class WorkerNodeStub(object):
 
 
 class WorkerNodeServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """── Expuesto por cada Nodo Python ─────────────────────────────────────────────
+    """
 
     def GetMetrics(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """El orquestador consulta métricas detalladas de este nodo
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def YieldTasks(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """El orquestador le pide que ceda tareas (work-stealing coordinado)
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -413,7 +439,8 @@ def add_WorkerNodeServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class WorkerNode(object):
-    """Missing associated documentation comment in .proto file."""
+    """── Expuesto por cada Nodo Python ─────────────────────────────────────────────
+    """
 
     @staticmethod
     def GetMetrics(request,
