@@ -100,6 +100,34 @@ class TaskPriorityQueue:
             counts = Counter(task.priority for task in self._entries.values())
             return dict(counts)
 
+    async def steal(self, count: int) -> list[Task]:
+        if count <= 0:
+            return []
+
+        now = time.monotonic()
+        async with self._lock:
+            ranked = sorted(
+                (
+                    (
+                        self._scorer.compute_score(task, now),
+                        self._scorer.deadline_sort_key(task),
+                        task.task_id,
+                    )
+                    for task in self._entries.values()
+                ),
+                key=lambda item: (item[0], item[1], item[2]),
+            )
+            stolen: list[Task] = []
+            for _, _, task_id in ranked[:count]:
+                task = self._entries.pop(task_id, None)
+                if task is None:
+                    continue
+                self._versions[task_id] = self._versions.get(task_id, 0) + 1
+                stolen.append(task)
+            if not self._entries:
+                self._not_empty.clear()
+            return stolen
+
     async def qsize(self) -> int:
         async with self._lock:
             return len(self._entries)

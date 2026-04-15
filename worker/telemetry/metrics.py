@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import deque
+
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, start_http_server
 
 from worker.models.types import ResourceSnapshot
@@ -8,6 +10,7 @@ from worker.models.types import ResourceSnapshot
 class WorkerMetrics:
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         self._registry = registry or CollectorRegistry(auto_describe=True)
+        self._recent_processing_ms: deque[float] = deque(maxlen=100)
         self.queue_length = Gauge("worker_queue_length", "Current queued tasks", registry=self._registry)
         self.report_queue_length = Gauge("worker_report_queue_length", "Pending coordinator events", registry=self._registry)
         self.queue_wait_ms = Histogram(
@@ -69,7 +72,20 @@ class WorkerMetrics:
     def set_readiness(self, ready: bool) -> None:
         self.readiness.set(1 if ready else 0)
 
+    def record_processing_time_ms(self, value: float) -> None:
+        self.processing_time_ms.observe(value)
+        self._recent_processing_ms.append(float(value))
+
+    def recent_latency_summary(self) -> tuple[float, float]:
+        if not self._recent_processing_ms:
+            return 0.0, 0.0
+        values = sorted(self._recent_processing_ms)
+        avg = sum(values) / len(values)
+        p95_index = max(0, min(len(values) - 1, round((len(values) - 1) * 0.95)))
+        return avg, values[p95_index]
+
     def snapshot(self) -> dict[str, float]:
+        avg_latency_ms, p95_latency_ms = self.recent_latency_summary()
         return {
             "queue_length": float(self.queue_length._value.get()),  # type: ignore[union-attr, attr-defined]
             "report_queue_length": float(self.report_queue_length._value.get()),  # type: ignore[union-attr, attr-defined]
@@ -87,4 +103,6 @@ class WorkerMetrics:
             "capacity_effective": float(self.capacity_effective._value.get()),  # type: ignore[union-attr, attr-defined]
             "coordinator_connected": float(self.coordinator_connected._value.get()),  # type: ignore[union-attr, attr-defined]
             "readiness": float(self.readiness._value.get()),  # type: ignore[union-attr, attr-defined]
+            "avg_latency_ms": float(avg_latency_ms),
+            "p95_latency_ms": float(p95_latency_ms),
         }

@@ -10,7 +10,7 @@ import pytest
 from PIL import Image
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from proto import worker_node_pb2, worker_node_pb2_grpc
+from proto import orchestrator_pb2, orchestrator_pb2_grpc, worker_node_pb2, worker_node_pb2_grpc
 from worker.config import WorkerConfig
 from worker.core.node import WorkerNode
 from worker.grpc.servicer import WorkerControlServicer
@@ -77,27 +77,39 @@ def build_payload() -> bytes:
     return buffer.getvalue()
 
 
-class MockCoordinator(worker_node_pb2_grpc.CoordinatorCallbackServiceServicer):
+class MockCoordinator(orchestrator_pb2_grpc.OrchestratorServicer):
     def __init__(self) -> None:
-        self.progress: list[worker_node_pb2.ProgressEvent] = []
-        self.results: list[worker_node_pb2.ExecutionResult] = []
+        self.progress: list[orchestrator_pb2.TaskProgress] = []
+        self.results: list[orchestrator_pb2.TaskResult] = []
         self.progress_metadata: list[tuple[tuple[str, str], ...]] = []
         self.result_metadata: list[tuple[tuple[str, str], ...]] = []
+        self.heartbeats: list[orchestrator_pb2.OrchestratorHeartbeatRequest] = []
+        self.pull_requests: list[orchestrator_pb2.PullRequest] = []
+        self.pulled_tasks: list[orchestrator_pb2.ImageTask] = []
         self.result_event = asyncio.Event()
 
-    async def ReportProgress(self, request, context):
+    async def PullTasks(self, request, context):
+        self.pull_requests.append(request)
+        if self.pulled_tasks:
+            tasks = list(self.pulled_tasks)
+            self.pulled_tasks.clear()
+            return orchestrator_pb2.PullResponse(tasks=tasks, queue_dry=False)
+        return orchestrator_pb2.PullResponse(queue_dry=True)
+
+    async def UpdateTaskProgress(self, request, context):
         self.progress.append(request)
         self.progress_metadata.append(tuple((item.key, item.value) for item in context.invocation_metadata()))
-        return worker_node_pb2.ReportAck(accepted=True, message="ok")
+        return orchestrator_pb2.Ack(ok=True, msg="ok")
 
-    async def ReportResult(self, request, context):
+    async def SubmitResult(self, request, context):
         self.results.append(request)
         self.result_metadata.append(tuple((item.key, item.value) for item in context.invocation_metadata()))
         self.result_event.set()
-        return worker_node_pb2.ReportAck(accepted=True, message="ok")
+        return orchestrator_pb2.Ack(ok=True, msg="ok")
 
-    async def Heartbeat(self, request, context):
-        return worker_node_pb2.HeartbeatReply(accepted=True, message="ok")
+    async def SendHeartbeat(self, request, context):
+        self.heartbeats.append(request)
+        return orchestrator_pb2.Ack(ok=True, msg="ok")
 
 
 @pytest.mark.asyncio
@@ -109,7 +121,7 @@ async def test_worker_processes_and_reports_task(tmp_path):
     coordinator = MockCoordinator()
 
     coordinator_server = grpc.aio.server()
-    worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
+    orchestrator_pb2_grpc.add_OrchestratorServicer_to_server(coordinator, coordinator_server)
     coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
     await coordinator_server.start()
 
@@ -161,11 +173,14 @@ async def test_worker_processes_and_reports_task(tmp_path):
     await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
     assert coordinator.results
     result = coordinator.results[-1]
-    assert result.status == worker_node_pb2.TASK_STATUS_SUCCEEDED
-    assert result.width == 80
-    assert result.height == 60
+    assert result.success is True
+    with Image.open(BytesIO(result.result_data)) as processed:
+        assert processed.size == (80, 60)
     assert len(coordinator.progress) >= 2
     assert any(key == "traceparent" and value == traceparent for key, value in coordinator.result_metadata[-1])
+    assert coordinator.results[-1].success is True
+    assert coordinator.results[-1].result_data
+    assert coordinator.heartbeats
 
     status = await stub.GetNodeStatus(worker_node_pb2.GetNodeStatusRequest())
     assert status.node_id == "integration-node"
@@ -185,7 +200,7 @@ async def test_worker_control_supports_webp_output_format_enum(tmp_path):
     coordinator = MockCoordinator()
 
     coordinator_server = grpc.aio.server()
-    worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
+    orchestrator_pb2_grpc.add_OrchestratorServicer_to_server(coordinator, coordinator_server)
     coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
     await coordinator_server.start()
 
@@ -234,11 +249,8 @@ async def test_worker_control_supports_webp_output_format_enum(tmp_path):
 
     await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
     result = coordinator.results[-1]
-    assert result.status == worker_node_pb2.TASK_STATUS_SUCCEEDED
-    assert result.output_format == worker_node_pb2.IMAGE_FORMAT_WEBP
-    assert result.output_path.endswith(".webp")
-    assert result.width == 64
-    assert result.height == 48
+    assert result.success is True
+    assert result.result_data
 
     await channel.close()
     await worker_server.stop(grace=3)
@@ -271,3 +283,42 @@ async def test_worker_can_run_without_embedded_coordinator(tmp_path):
 
     await worker_server.stop(grace=3)
     await node.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_pulls_task_from_orchestrator_and_submits_result(tmp_path):
+    coordinator_port = free_port()
+    metrics_port = free_port()
+    health_port = free_port()
+    coordinator = MockCoordinator()
+    coordinator.pulled_tasks.append(
+        orchestrator_pb2.ImageTask(
+            task_id="pulled-task",
+            image_data=build_payload(),
+            filename="pulled.png",
+            filter_type="grayscale",
+            target_width=80,
+            target_height=60,
+            enqueue_ts=int(datetime.now(tz=UTC).timestamp() * 1000),
+            priority=1,
+        )
+    )
+
+    coordinator_server = grpc.aio.server()
+    orchestrator_pb2_grpc.add_OrchestratorServicer_to_server(coordinator, coordinator_server)
+    coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
+    await coordinator_server.start()
+
+    config = build_config(tmp_path, free_port(), coordinator_port, metrics_port, health_port)
+    node = WorkerNode(config=config, metrics=WorkerMetrics())
+    await node.start()
+
+    await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
+    result = coordinator.results[-1]
+    assert result.task_id == "pulled-task"
+    assert result.success is True
+    assert result.result_data
+    assert coordinator.pull_requests
+
+    await node.close()
+    await coordinator_server.stop(grace=3)

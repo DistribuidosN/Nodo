@@ -20,7 +20,7 @@ Este repositorio deja listo solo el lado de los workers.
 
 ## Que expone cada worker
 
-Cada worker levanta un servidor gRPC con dos contratos:
+Cada worker levanta un servidor gRPC con tres contratos:
 
 - `imagenode.ImageNodeService`
   Contrato de negocio para pedir procesamiento de imagenes.
@@ -28,10 +28,19 @@ Cada worker levanta un servidor gRPC con dos contratos:
 - `worker.WorkerControlService`
   Contrato de control del nodo para consultar estado, enviar tareas, cancelar, drenar o apagar.
 
+- `worker.WorkerNode`
+  Contrato esperado por el servidor principal Java para consultar metricas del nodo y pedir cesion de tareas.
+
+El servidor principal Java expone:
+
+- `worker.Orchestrator`
+  Contrato de coordinacion para `PullTasks`, `SubmitResult`, `UpdateTaskProgress` y `SendHeartbeat`.
+
 Protos:
 
 - [proto/imagenode.proto](proto/imagenode.proto)
 - [proto/worker_node.proto](proto/worker_node.proto)
+- [proto/orchestrator.proto](proto/orchestrator.proto)
 
 ## Estructura recomendada para leer el proyecto
 

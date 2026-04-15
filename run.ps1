@@ -20,6 +20,7 @@ switch ($Command) {
     "protos" {
         Invoke-Step "Generando protos worker_node" { python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/worker_node.proto }
         Invoke-Step "Generando protos imagenode" { python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/imagenode.proto }
+        Invoke-Step "Generando protos orchestrator" { python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. proto/orchestrator.proto }
     }
     "dev-stack" {
         Invoke-Step "Generando certificados y secretos de desarrollo" { python scripts/dev/generate_dev_security_assets.py }

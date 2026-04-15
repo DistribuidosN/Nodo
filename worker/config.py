@@ -93,7 +93,7 @@ class WorkerConfig:
             node_id=os.getenv("WORKER_NODE_ID", socket.gethostname()),
             bind_host=os.getenv("WORKER_BIND_HOST", "127.0.0.1"),
             bind_port=_get_int("WORKER_BIND_PORT", 50051),
-            coordinator_target=os.getenv("WORKER_COORDINATOR_TARGET") or None,
+            coordinator_target=os.getenv("WORKER_COORDINATOR_TARGET") or os.getenv("APP_SERVER_GRPC_TARGET") or None,
             metrics_host=os.getenv("WORKER_METRICS_HOST", "127.0.0.1"),
             metrics_port=_get_int("WORKER_METRICS_PORT", 9100),
             health_host=os.getenv("WORKER_HEALTH_HOST", "127.0.0.1"),
@@ -142,7 +142,8 @@ class WorkerConfig:
             coordinator_ca_file=os.getenv("WORKER_COORDINATOR_CA_FILE"),
             coordinator_client_cert_file=os.getenv("WORKER_COORDINATOR_CLIENT_CERT_FILE"),
             coordinator_client_key_file=os.getenv("WORKER_COORDINATOR_CLIENT_KEY_FILE"),
-            coordinator_server_name_override=os.getenv("WORKER_COORDINATOR_SERVER_NAME_OVERRIDE"),
+            coordinator_server_name_override=os.getenv("WORKER_COORDINATOR_SERVER_NAME_OVERRIDE")
+            or os.getenv("APP_SERVER_SERVER_NAME_OVERRIDE"),
             tracing_enabled=_get_bool("WORKER_TRACING_ENABLED", False),
             tracing_service_name=os.getenv("WORKER_TRACING_SERVICE_NAME"),
             tracing_otlp_endpoint=os.getenv("WORKER_TRACING_OTLP_ENDPOINT"),

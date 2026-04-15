@@ -7,7 +7,8 @@
         "target": "127.0.0.1:50051",
         "services": [
           "imagenode.ImageNodeService",
-          "worker.WorkerControlService"
+          "worker.WorkerControlService",
+          "worker.WorkerNode"
         ]
       },
       {
@@ -15,7 +16,8 @@
         "target": "127.0.0.1:50061",
         "services": [
           "imagenode.ImageNodeService",
-          "worker.WorkerControlService"
+          "worker.WorkerControlService",
+          "worker.WorkerNode"
         ]
       },
       {
@@ -23,18 +25,19 @@
         "target": "127.0.0.1:50071",
         "services": [
           "imagenode.ImageNodeService",
-          "worker.WorkerControlService"
+          "worker.WorkerControlService",
+          "worker.WorkerNode"
         ]
       }
     ],
-    "optional_app_server_callback_endpoint": {
-      "service": "worker.CoordinatorCallbackService",
+    "app_server_orchestrator_endpoint": {
+      "service": "worker.Orchestrator",
       "configured_by": [
         "APP_SERVER_GRPC_TARGET",
         "WORKER_COORDINATOR_TARGET"
       ],
-      "example_target": "127.0.0.1:50052",
-      "note": "Este endpoint no se despliega en este repo. Lo debe exponer el servidor principal Java si quiere recibir callbacks."
+      "example_target": "127.0.0.1:50051",
+      "note": "Este endpoint no se despliega en este repo. Lo debe exponer el servidor principal Java para coordinar pulls, heartbeats y entrega de resultados."
     }
   },
   "grpc_methods": {
@@ -58,10 +61,18 @@
       "DrainNode",
       "ShutdownNode"
     ],
-    "worker.CoordinatorCallbackService": [
-      "ReportProgress",
-      "ReportResult",
-      "Heartbeat"
+    "worker.Orchestrator": [
+      "PullTasks",
+      "SubmitResult",
+      "StealTasks",
+      "UpdateTaskProgress",
+      "SendHeartbeat",
+      "GetQueueStatus",
+      "WatchQueue"
+    ],
+    "worker.WorkerNode": [
+      "GetMetrics",
+      "YieldTasks"
     ]
   },
   "http_endpoints": {
@@ -94,6 +105,7 @@
   "repo_files": {
     "business_proto": "proto/imagenode.proto",
     "control_proto": "proto/worker_node.proto",
+    "orchestrator_proto": "proto/orchestrator.proto",
     "docker_compose": "docker-compose.yml",
     "env_example": ".env.example",
     "readme": "README.md",

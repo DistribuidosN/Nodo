@@ -68,6 +68,7 @@ class WorkerNode:
         self._config = config
         self._metrics = metrics
         self._logger = logging.getLogger("worker.node")
+        self._started_at = datetime.now(tz=UTC)
         self._scorer = TaskScorer(config)
         self._estimator = ServiceTimeEstimator()
         self._queue = TaskPriorityQueue(self._scorer)
@@ -84,6 +85,8 @@ class WorkerNode:
         self._idempotency_index: dict[str, str] = {}
         self._completed_at: dict[str, float] = {}
         self._result_waiters: dict[str, list[asyncio.Future[ExecutionResultRecord]]] = {}
+        self._steals_performed = 0
+        self._last_steal_at_monotonic = 0.0
         self._task_lock = asyncio.Lock()
         self._storage = StorageClient.from_config(config)
         self._state_root_uri = str(config.state_dir)
@@ -106,6 +109,8 @@ class WorkerNode:
             status_provider=self.get_node_state,
             storage=self._storage,
             state_root_uri=self._state_root_uri,
+            submit_task=self.submit_task,
+            stats_provider=self.orchestrator_stats,
         )
         self._execution_manager = ExecutionManager(
             config=config,
@@ -292,6 +297,29 @@ class WorkerNode:
     def current_health(self) -> NodeHealth:
         return self._latest_health
 
+    async def yield_tasks(self, count: int) -> list[Task]:
+        stolen = await self._queue.steal(count)
+        if not stolen:
+            return []
+        async with self._task_lock:
+            for task in stolen:
+                self._pending_store.remove(task.task_id)
+                self._tasks.pop(task.task_id, None)
+                self._idempotency_index.pop(task.idempotency_key, None)
+            self._steals_performed += len(stolen)
+            self._last_steal_at_monotonic = time.monotonic()
+        return stolen
+
+    def orchestrator_stats(self) -> dict[str, int | float]:
+        return {
+            "steals_performed": self._steals_performed,
+            "tasks_done": len(self.list_completed_results()),
+            "uptime_seconds": max(0, int((datetime.now(tz=UTC) - self._started_at).total_seconds())),
+            "recent_steal_age_seconds": max(0.0, time.monotonic() - self._last_steal_at_monotonic)
+            if self._last_steal_at_monotonic > 0
+            else float("inf"),
+        }
+
     async def wait_for_result(self, task_id: str, timeout_seconds: float | None = None) -> ExecutionResultRecord:
         existing = self._results.get(task_id)
         if existing is not None and existing.state in {TaskState.SUCCEEDED, TaskState.FAILED, TaskState.CANCELLED}:
@@ -370,6 +398,8 @@ class WorkerNode:
     ) -> None:
         task.status = result.state
         self._pending_store.remove(task.task_id)
+        result.metadata.setdefault("queue_wait_ms", str(queue_wait_ms))
+        result.metadata.setdefault("processing_ms", str(run_time_ms))
         self._results[task.task_id] = result
         self._completed_at[task.task_id] = time.monotonic()
         self._metrics.queue_wait_ms.observe(queue_wait_ms)
@@ -443,6 +473,8 @@ class WorkerNode:
             started_at=None,
             finished_at=datetime.now(tz=UTC),
         )
+        result.metadata.setdefault("queue_wait_ms", "0")
+        result.metadata.setdefault("processing_ms", "0")
         self._results[task.task_id] = result
         self._completed_at[task.task_id] = time.monotonic()
         self._metrics.failure_total.inc()

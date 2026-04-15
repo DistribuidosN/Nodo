@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+package worker;
+
+option java_package = "enfok.worker.proto";
+option java_multiple_files = true;
+
+message ImageTask {
+  string task_id = 1;
+  bytes image_data = 2;
+  string filename = 3;
+  string filter_type = 4;
+  int32 target_width = 5;
+  int32 target_height = 6;
+  int64 enqueue_ts = 7;
+  int32 priority = 8;
+}
+
+message NodeMetrics {
+  string node_id = 1;
+  string ip_address = 2;
+  float ram_used_mb = 3;
+  float ram_total_mb = 4;
+  float cpu_percent = 5;
+  int32 workers_busy = 6;
+  int32 workers_total = 7;
+  int32 queue_size = 8;
+  int32 queue_capacity = 9;
+  int32 tasks_done = 10;
+  int32 steals_performed = 11;
+  float avg_latency_ms = 12;
+  float p95_latency_ms = 13;
+  int64 uptime_seconds = 14;
+  string status = 15;
+}
+
+message PullRequest {
+  string node_id = 1;
+  int32 slots_free = 2;
+  NodeMetrics metrics = 3;
+}
+
+message PullResponse {
+  repeated ImageTask tasks = 1;
+  bool queue_dry = 2;
+}
+
+message TaskResult {
+  string task_id = 1;
+  string node_id = 2;
+  string worker_id = 3;
+  bool success = 4;
+  bytes result_data = 5;
+  string error_msg = 6;
+  int64 start_ts = 7;
+  int64 finish_ts = 8;
+  int32 processing_ms = 9;
+  NodeMetrics metrics = 10;
+}
+
+message StealRequest {
+  string thief_node_id = 1;
+  string victim_node_id = 2;
+  int32 steal_count = 3;
+}
+
+message StealResponse {
+  repeated ImageTask stolen_tasks = 1;
+  bool allowed = 2;
+  string reason = 3;
+}
+
+message TaskProgress {
+  string task_id = 1;
+  string worker_id = 2;
+  int32 progress_percentage = 3;
+  string status_message = 4;
+}
+
+message QueueStatusRequest {
+  string requester_id = 1;
+}
+
+message NodeQueueInfo {
+  string node_id = 1;
+  int32 queue_size = 2;
+  int32 queue_cap = 3;
+  int32 workers_busy = 4;
+  bool available = 5;
+  string status = 6;
+}
+
+message QueueStatusResponse {
+  int32 central_queue_size = 1;
+  int32 central_queue_cap = 2;
+  repeated NodeQueueInfo nodes = 3;
+  int64 timestamp = 4;
+}
+
+message OrchestratorHeartbeatRequest {
+  string node_id = 1;
+  string ip_address = 2;
+  NodeMetrics metrics = 3;
+}
+
+message Ack {
+  bool ok = 1;
+  string msg = 2;
+}
+
+service Orchestrator {
+  rpc PullTasks(PullRequest) returns (PullResponse);
+  rpc SubmitResult(TaskResult) returns (Ack);
+  rpc StealTasks(StealRequest) returns (StealResponse);
+  rpc UpdateTaskProgress(TaskProgress) returns (Ack);
+  rpc SendHeartbeat(OrchestratorHeartbeatRequest) returns (Ack);
+  rpc GetQueueStatus(QueueStatusRequest) returns (QueueStatusResponse);
+  rpc WatchQueue(QueueStatusRequest) returns (stream QueueStatusResponse);
+}
+
+service WorkerNode {
+  rpc GetMetrics(QueueStatusRequest) returns (NodeMetrics);
+  rpc YieldTasks(StealRequest) returns (StealResponse);
+}

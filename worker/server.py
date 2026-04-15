@@ -7,10 +7,11 @@ import signal
 
 import grpc
 
-from proto import imagenode_pb2_grpc, worker_node_pb2_grpc
+from proto import imagenode_pb2_grpc, orchestrator_pb2_grpc, worker_node_pb2_grpc
 from worker.config import WorkerConfig
 from worker.core.worker_runtime import WorkerNode
 from worker.grpc.image_node_service import ImageNodeBusinessServicer
+from worker.grpc.orchestrator_worker_node_service import OrchestratorWorkerNodeServicer
 from worker.grpc.security import build_server_credentials
 from worker.grpc.worker_control_service import WorkerControlServicer
 from worker.telemetry.logging import configure_logging
@@ -30,6 +31,10 @@ async def run_worker_server() -> None:
     worker_node_pb2_grpc.add_WorkerControlServiceServicer_to_server(WorkerControlServicer(node), server)  # type: ignore[attr-defined]
     imagenode_pb2_grpc.add_ImageNodeServiceServicer_to_server(  # type: ignore[attr-defined]
         ImageNodeBusinessServicer(node=node, metrics=metrics, stream_concurrency=config.max_active_tasks),
+        server,
+    )
+    orchestrator_pb2_grpc.add_WorkerNodeServicer_to_server(  # type: ignore[attr-defined]
+        OrchestratorWorkerNodeServicer(node=node, metrics=metrics),
         server,
     )
     server_credentials = build_server_credentials(

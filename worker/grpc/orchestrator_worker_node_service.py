@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from typing import Any, cast
+
+import grpc.aio
+import psutil
+
+from proto import orchestrator_pb2, orchestrator_pb2_grpc
+from worker.core.node import WorkerNode
+from worker.models.types import Task, TransformationSpec
+from worker.telemetry.metrics import WorkerMetrics
+from worker.telemetry.tracing import extract_context_from_grpc_metadata, start_span
+
+
+PROTO = cast(Any, orchestrator_pb2)
+
+
+class OrchestratorWorkerNodeServicer(orchestrator_pb2_grpc.WorkerNodeServicer):
+    def __init__(self, node: WorkerNode, metrics: WorkerMetrics) -> None:
+        self._node = node
+        self._metrics = metrics
+
+    async def GetMetrics(self, request: orchestrator_pb2.QueueStatusRequest, context: grpc.aio.ServicerContext) -> orchestrator_pb2.NodeMetrics:  # type: ignore[attr-defined, name-defined]
+        span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
+        with start_span("worker.rpc.orchestrator_get_metrics", context=span_context):
+            return await self._build_node_metrics()
+
+    async def YieldTasks(self, request: orchestrator_pb2.StealRequest, context: grpc.aio.ServicerContext) -> orchestrator_pb2.StealResponse:  # type: ignore[attr-defined, name-defined]
+        span_context = extract_context_from_grpc_metadata(context.invocation_metadata())
+        with start_span(
+            "worker.rpc.orchestrator_yield_tasks",
+            context=span_context,
+            attributes={"worker.node.victim_id": request.victim_node_id, "worker.node.thief_id": request.thief_node_id},
+        ):
+            if request.victim_node_id and request.victim_node_id != self._node.current_health().node_id:
+                return orchestrator_pb2.StealResponse(allowed=False, reason="victim node does not match this worker")
+            tasks = await self._node.yield_tasks(int(request.steal_count))
+            if not tasks:
+                return orchestrator_pb2.StealResponse(allowed=False, reason="no queued tasks available to yield")
+            return orchestrator_pb2.StealResponse(
+                stolen_tasks=[self._task_to_proto(item) for item in tasks],
+                allowed=True,
+                reason="ok",
+            )
+
+    async def _build_node_metrics(self) -> Any:
+        state = await self._node.get_node_state()
+        memory = psutil.virtual_memory()
+        snapshot = self._metrics.snapshot()
+        orchestrator_stats = self._node.orchestrator_stats()
+        recent_steal_age = float(orchestrator_stats["recent_steal_age_seconds"])
+        if state.mode.value != "active" or not state.accepting_tasks:
+            status = "ERROR"
+        elif recent_steal_age <= 5.0:
+            status = "STEALING"
+        elif state.active_tasks > 0 or state.queue_length > 0:
+            status = "BUSY"
+        else:
+            status = "IDLE"
+        return PROTO.NodeMetrics(
+            node_id=state.node_id,
+            ip_address=self._resolve_ip_address(),
+            ram_used_mb=float((memory.total - memory.available) / (1024 * 1024)),
+            ram_total_mb=float(memory.total / (1024 * 1024)),
+            cpu_percent=float(state.cpu_utilization * 100.0),
+            workers_busy=int(state.active_tasks),
+            workers_total=int(self._node._config.max_active_tasks),
+            queue_size=int(state.queue_length),
+            queue_capacity=int(min(self._node._config.queue_high_watermark, self._node._config.max_queue_size)),
+            tasks_done=int(orchestrator_stats["tasks_done"]),
+            steals_performed=int(orchestrator_stats["steals_performed"]),
+            avg_latency_ms=float(snapshot.get("avg_latency_ms", 0.0)),
+            p95_latency_ms=float(snapshot.get("p95_latency_ms", 0.0)),
+            uptime_seconds=int(orchestrator_stats["uptime_seconds"]),
+            status=status,
+        )
+
+    def _task_to_proto(self, task: Task) -> Any:
+        filter_type, target_width, target_height = self._task_filter_projection(task.transforms)
+        payload = task.input_image.payload or b""
+        if not payload and task.input_image.input_path:
+            payload = self._node._storage.read_bytes(task.input_image.input_path)
+        elif not payload and task.input_image.input_uri:
+            payload = self._node._storage.read_bytes(task.input_image.input_uri)
+        enqueue_ts = int(task.created_at.timestamp() * 1000)
+        return PROTO.ImageTask(
+            task_id=task.task_id,
+            image_data=payload,
+            filename=task.metadata.get("source_file_name", f"{task.task_id}.{task.output_format or 'png'}"),
+            filter_type=filter_type,
+            target_width=target_width,
+            target_height=target_height,
+            enqueue_ts=enqueue_ts,
+            priority=1 if task.priority >= 8 else 0,
+        )
+
+    def _task_filter_projection(self, transforms: list[TransformationSpec]) -> tuple[str, int, int]:
+        filter_type = "none"
+        target_width = 0
+        target_height = 0
+        for transform in transforms:
+            if transform.operation.value == "resize":
+                target_width = int(transform.params.get("width", "0") or "0")
+                target_height = int(transform.params.get("height", "0") or "0")
+                continue
+            if transform.operation.value in {"grayscale", "ocr", "inference"}:
+                filter_type = transform.operation.value
+        return filter_type, target_width, target_height
+
+    def _resolve_ip_address(self) -> str:
+        host = self._node._config.bind_host.strip()
+        if host and host not in {"0.0.0.0", "::", "127.0.0.1", "localhost"}:
+            return host
+        return "127.0.0.1"

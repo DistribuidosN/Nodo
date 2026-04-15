@@ -360,7 +360,7 @@ class ExecutionManager:
                 output_path, output_format, width, height, size_bytes, metadata = await running.future
                 run_time_ms = int((time.monotonic() - running.started_at_monotonic) * 1000)
                 self._estimator.update(task, run_time_ms)
-                self._metrics.processing_time_ms.observe(run_time_ms)
+                self._metrics.record_processing_time_ms(run_time_ms)
                 result = ExecutionResultRecord(
                     task_id=task.task_id,
                     image_id=task.input_image.image_id,
