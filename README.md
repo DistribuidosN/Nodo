@@ -49,7 +49,6 @@ Arbol principal que conviene conservar:
 worker/
 proto/
 scripts/
-examples/
 tests/
 docs/
   api/
@@ -73,9 +72,6 @@ Carpetas que se generan localmente y se pueden borrar sin afectar el codigo:
 Artefactos de demo generados:
 
 - `docs/demo/demo-*`
-
-El archivo [docs/demo/batch-image-list.txt](docs/demo/batch-image-list.txt)
-si se conserva porque define el lote usado para comparar los tres workers.
 
 ## Modos de despliegue
 
@@ -182,17 +178,11 @@ python -m worker.server
 
 ## Probar el worker
 
-### Enviar una tarea al contrato de control
+Para pruebas manuales del contrato usa:
 
-```powershell
-python examples/submit_task.py --target 127.0.0.1:50051
-```
-
-### Enviar una imagen real al contrato de negocio
-
-```powershell
-python examples/send_real_image.py --file "C:\ruta\imagen.png" --target 127.0.0.1:50051 --filter grayscale
-```
+- la coleccion de Postman en `docs/api/postman/`
+- el script [scripts/demo/demo_end_to_end.py](scripts/demo/demo_end_to_end.py)
+- o el cliente real del servidor principal Java
 
 ### Ver salud
 
@@ -311,9 +301,6 @@ propio lado despues de recibir el reporte o el resultado.
 
 - `.\run.ps1 dev-down`
   Baja el entorno local completo.
-
-- `.\run.ps1 compare-batch`
-  Compara el mismo lote de imagenes contra `worker1`, `worker2` y `worker3`.
 
 - `.\run.ps1 test`
   Ejecuta los tests.
