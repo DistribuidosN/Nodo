@@ -18,7 +18,7 @@ class HealthServer:
         self._host = host
         self._port = port
         self._provider = provider
-        self._server = ThreadingHTTPServer((host, port), self._make_handler())
+        self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     def _make_handler(self):
@@ -58,11 +58,13 @@ class HealthServer:
         return Handler
 
     def start(self) -> None:
+        self._server = ThreadingHTTPServer((self._host, self._port), self._make_handler())
         self._thread = threading.Thread(target=self._server.serve_forever, name="worker-health-server", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
-        self._server.shutdown()
-        self._server.server_close()
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
         if self._thread is not None:
             self._thread.join(timeout=2.0)

@@ -7,8 +7,8 @@ option java_package = "com.upb.imagenode.grpc";
 option java_outer_classname = "ImageNodeProto";
 
 service ImageNodeService {
-  rpc ProcessToPath(ProcessRequest) returns (PathResponse);
-  rpc ProcessToData(ProcessRequest) returns (DataResponse);
+  rpc Proch(ProcessRequest) returns (PathResponse);
+  rpc ProcessToDataessToPat(ProcessRequest) returns (DataResponse);
   rpc HealthCheck(EmptyRequest) returns (HealthCheckResponse);
   rpc GetMetrics(EmptyRequest) returns (MetricsResponse);
   rpc UploadLargeImage(stream ImageChunk) returns (DataResponse);

@@ -1,0 +1,179 @@
+syntax = "proto3";
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  A2WS — Adaptive Asynchronous Work-Stealing
+//  Sistema de procesamiento de imágenes distribuido
+//
+//  Topología fija:
+//    • 1 Servidor Java (Quarkus)  →  Orquestador  (puerto 50051)
+//    • 3 Nodos Python             →  WorkerNode   (puerto 50052 c/u)
+//    • Cada nodo: 6 workers, cola local = 6 slots
+// ─────────────────────────────────────────────────────────────────────────────
+
+package a2ws;
+
+option java_package         = "enfok.server.grpc";
+option java_outer_classname = "A2WSProto";
+option java_multiple_files  = true;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MENSAJES COMUNES
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Tarea de imagen publicada por el orquestador
+message ImageTask {
+  string task_id      = 1;   // UUID único de la tarea
+  bytes  image_data   = 2;   // imagen cruda (JPEG / PNG / WebP)
+  string filename     = 3;   // nombre original del archivo
+  string filter_type  = 4;   // "thumbnail" | "sobel" | "grayscale" | "ocr"
+  int32  target_width = 5;   // ancho deseado (0 = sin cambio)
+  int32  target_height= 6;   // alto deseado  (0 = sin cambio)
+  int64  enqueue_ts   = 7;   // epoch-ms cuando el orquestador encoló la tarea
+  int32  priority     = 8;   // 0 = normal · 1 = alta (burst)
+}
+
+// Métricas en tiempo real de un nodo
+message NodeMetrics {
+  string node_id           = 1;
+  string ip_address        = 2;
+  float  ram_used_mb       = 3;
+  float  ram_total_mb      = 4;
+  float  cpu_percent       = 5;
+  int32  workers_busy      = 6;
+  int32  workers_total     = 7;   // siempre 6 en esta topología
+  int32  queue_size        = 8;   // tareas en cola local ahora mismo
+  int32  queue_capacity    = 9;   // siempre 6 en esta topología
+  int32  tasks_done        = 10;  // acumulado desde el arranque
+  int32  steals_performed  = 11;  // work-steals realizados
+  float  avg_latency_ms    = 12;  // media de las últimas 100 tareas
+  float  p95_latency_ms    = 13;  // percentil 95 de latencia
+  int64  uptime_seconds    = 14;
+  string status            = 15;  // "IDLE" | "BUSY" | "STEALING" | "ERROR"
+}
+
+// ─── Pull (nodo pide trabajo al orquestador) ─────────────────────────────────
+
+message PullRequest {
+  string      node_id    = 1;   // "node-1" | "node-2" | "node-3"
+  int32       slots_free = 2;   // cuántos slots libres tiene (workers inactivos)
+  NodeMetrics metrics    = 3;   // estado actual del nodo adjunto al pull
+}
+
+message PullResponse {
+  repeated ImageTask tasks     = 1;   // vacío si la cola central está seca
+  bool               queue_dry = 2;   // true = no hay más trabajo por ahora
+}
+
+// ─── Submit (nodo entrega resultado al orquestador) ──────────────────────────
+
+message TaskResult {
+  string      task_id       = 1;
+  string      node_id       = 2;
+  string      worker_id     = 3;   // "node-1-w3"
+  bool        success       = 4;
+  bytes       result_data   = 5;   // imagen procesada
+  string      error_msg     = 6;   // vacío si success=true
+  int64       start_ts      = 7;   // epoch-ms inicio procesamiento
+  int64       finish_ts     = 8;   // epoch-ms fin
+  int32       processing_ms = 9;
+  NodeMetrics metrics       = 10;  // snapshot justo después de terminar
+}
+
+// ─── Work-Stealing ────────────────────────────────────────────────────────────
+
+message StealRequest {
+  string thief_node_id  = 1;   // quién quiere robar
+  string victim_node_id = 2;   // a quién le roba (más cargado)
+  int32  steal_count    = 3;   // cuántas tareas solicita
+}
+
+message StealResponse {
+  repeated ImageTask stolen_tasks = 1;
+  bool               allowed      = 2;
+  string             reason       = 3;   // motivo si !allowed
+}
+
+// ─── Progreso de tarea (opcional, para progreso en UI) ───────────────────────
+
+message TaskProgress {
+  string task_id             = 1;
+  string worker_id           = 2;
+  int32  progress_percentage = 3;   // 0–100
+  string status_message      = 4;   // "Aplicando filtro Sobel..."
+}
+
+// ─── Monitoreo de colas ───────────────────────────────────────────────────────
+
+message QueueStatusRequest {
+  string requester_id = 1;   // node_id o "dashboard"
+}
+
+message NodeQueueInfo {
+  string node_id      = 1;
+  int32  queue_size   = 2;
+  int32  queue_cap    = 3;
+  int32  workers_busy = 4;
+  bool   available    = 5;
+  string status       = 6;
+}
+
+message QueueStatusResponse {
+  int32                   central_queue_size = 1;
+  int32                   central_queue_cap  = 2;
+  repeated NodeQueueInfo  nodes              = 3;
+  int64                   timestamp          = 4;   // epoch-ms de la snapshot
+}
+
+// ─── Heartbeat ────────────────────────────────────────────────────────────────
+
+message HeartbeatRequest {
+  string      node_id    = 1;
+  string      ip_address = 2;
+  NodeMetrics metrics    = 3;   // métricas ligeras junto al ping
+}
+
+// ─── Ack genérico ─────────────────────────────────────────────────────────────
+
+message Ack {
+  bool   ok  = 1;
+  string msg = 2;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  SERVICIOS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Expuesto por el Servidor Java (Orquestador) ───────────────────────────────
+service Orchestrator {
+
+  // A2WS PULL: el nodo pide trabajo cuando tiene slots libres
+  rpc PullTasks (PullRequest) returns (PullResponse);
+
+  // El nodo entrega el resultado de una imagen procesada
+  rpc SubmitResult (TaskResult) returns (Ack);
+
+  // El nodo solicita robar tareas de otro nodo (orquestador arbitra)
+  rpc StealTasks (StealRequest) returns (StealResponse);
+
+  // El nodo reporta progreso de una tarea en curso (UI en tiempo real)
+  rpc UpdateTaskProgress (TaskProgress) returns (Ack);
+
+  // Heartbeat: "sigo vivo"; si falla 3 veces → re-encolar sus tareas
+  rpc SendHeartbeat (HeartbeatRequest) returns (Ack);
+
+  // Estado completo de colas (para dashboard / decisiones A2WS)
+  rpc GetQueueStatus (QueueStatusRequest) returns (QueueStatusResponse);
+
+  // Stream: el orquestador empuja actualizaciones a quien esté suscrito
+  rpc WatchQueue (QueueStatusRequest) returns (stream QueueStatusResponse);
+}
+
+// ── Expuesto por cada Nodo Python ─────────────────────────────────────────────
+service WorkerNode {
+
+  // El orquestador consulta métricas detalladas de este nodo
+  rpc GetMetrics (QueueStatusRequest) returns (NodeMetrics);
+
+  // El orquestador le pide que ceda tareas (work-stealing coordinado)
+  rpc YieldTasks (StealRequest) returns (StealResponse);
+}
