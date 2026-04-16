@@ -28,9 +28,9 @@ from worker.models.types import (
 from worker.scheduler.cost_model import ServiceTimeEstimator
 from worker.scheduler.priority_queue import TaskPriorityQueue
 from worker.scheduler.scoring import TaskScorer
-from worker.telemetry.health import HealthServer
+# Se mantiene WorkerMetrics para el estado interno pero ya no hay HealthServer (HTTP)
 from worker.telemetry.metrics import WorkerMetrics
-from worker.telemetry.tracing import copy_internal_trace_metadata
+# Tracing eliminado para simplificar el flujo hacia orchestrator.proto
 
 
 PROTO_STATUS = {
@@ -92,6 +92,7 @@ class WorkerNode:
         self._state_root_uri = str(config.state_dir)
         self._state_store = StateStore(self._storage, self._state_root_uri)
         self._pending_store = PendingTaskStore(self._storage, self._state_root_uri)
+        # Estado de salud inicial
         self._latest_health = NodeHealth(
             node_id=config.node_id,
             state=HealthState.NOT_READY,
@@ -102,7 +103,7 @@ class WorkerNode:
             active_tasks=0,
             message="worker booting",
         )
-        self._health_server = HealthServer(config.health_host, config.health_port, self.current_health)
+        # Reporter: Maneja la comunicación gRPC con el Orquestador Java (Pull/Submit/Heartbeat)
         self._reporter = CoordinatorReporter(
             config=config,
             metrics=metrics,
@@ -124,22 +125,24 @@ class WorkerNode:
         )
 
     async def start(self) -> None:
+        """Inicia el nodo worker: prepara almacenamiento, inicia reportero y bucles de control."""
         self._config.input_dir.mkdir(parents=True, exist_ok=True)
         self._config.output_dir.mkdir(parents=True, exist_ok=True)
         self._config.state_dir.mkdir(parents=True, exist_ok=True)
         self._restore_completed_state()
         await self._restore_pending_tasks()
-        # Start metrics server (disable by setting WORKER_METRICS_PORT=0)
-        if self._config.metrics_port > 0:
-            self._metrics.start_server(self._config.metrics_host, self._config.metrics_port)
-        # Start HTTP health check server (disable by setting WORKER_HEALTH_PORT=0)
-        if self._config.health_port > 0:
-            self._health_server.start()
+        
+        # El servidor de métricas y health HTTP han sido eliminados por simplificación.
+        # Las métricas se siguen recolectando internamente para orchestrator.proto.
+        
         await self._reporter.start()
+        # Bucle principal de planificación de tareas
         self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="worker-scheduler")
+        # Bucle de actualización de salud interna
         self._health_task = asyncio.create_task(self._health_loop(), name="worker-health")
 
     async def close(self) -> None:
+        """Detiene de forma segura el nodo y libera recursos."""
         self._stop_event.set()
         if self._shutdown_task is not None:
             self._shutdown_task.cancel()
@@ -155,9 +158,6 @@ class WorkerNode:
                 await self._scheduler_task
         await self._execution_manager.shutdown()
         await self._reporter.stop()
-        # Stop health server if it was started
-        if self._config.health_port > 0:
-            self._health_server.stop()
 
     async def submit_task(self, task: Task) -> SubmitReply:
         async with self._task_lock:
@@ -169,6 +169,7 @@ class WorkerNode:
             if existing_task_id := self._idempotency_index.get(task.idempotency_key):
                 existing_result = self._results.get(existing_task_id)
                 existing_state = existing_result.state if existing_result is not None else TaskState.QUEUED
+                print(f"[DEBUG] Tarea REPETIDA detectada: ID={existing_task_id}, Estado actual={existing_state.value}")
                 return self._submit_reply(True, True, existing_task_id, existing_state, 0, "duplicate task reused existing idempotency key")
 
             queue_size = await self._queue.qsize()
@@ -215,7 +216,7 @@ class WorkerNode:
                 attempt=task.attempt,
                 queue_wait_ms=0,
                 run_time_ms=0,
-                message="task accepted into local priority queue",
+                message=f"task {task.task_id} accepted into local priority queue (position {position})",
                 metadata=self._trace_metadata(task),
             )
         )
@@ -396,6 +397,7 @@ class WorkerNode:
         queue_wait_ms: int,
         run_time_ms: int,
     ) -> None:
+        print(f"[DEBUG] Tarea {task.task_id} COMPLETADA con éxito")
         task.status = result.state
         self._pending_store.remove(task.task_id)
         result.metadata.setdefault("queue_wait_ms", str(queue_wait_ms))
@@ -454,6 +456,7 @@ class WorkerNode:
             self._pending_store.upsert(task)
             return
 
+        print(f"[ERROR] Tarea {task.task_id} FALLIDA permanentemente: {error_message}")
         task.status = TaskState.FAILED
         self._pending_store.remove(task.task_id)
         result = ExecutionResultRecord(
@@ -638,9 +641,8 @@ class WorkerNode:
         task.input_image.size_bytes = len(input_bytes)
 
     def _trace_metadata(self, task: Task) -> dict[str, str]:
-        metadata: dict[str, str] = {}
-        copy_internal_trace_metadata(task.metadata, metadata)
-        return metadata
+        """Extrae metadatos de trazado (actualmente simplificado tras remover tracing)."""
+        return {}
 
     def _resolve_result_waiters(self, task_id: str, result: ExecutionResultRecord) -> None:
         for waiter in self._result_waiters.pop(task_id, []):

@@ -29,6 +29,7 @@ message ImageTask {
   int32 priority = 6;        // Prioridad (0 por defecto)
   int32 target_width = 7;    // (Opcional) Ancho a redimensionar
   int32 target_height = 8;   // (Opcional) Alto a redimensionar
+  string image_format = 9;   // (Opcional) Formato de la imagen  
 }
 
 // Métricas en tiempo real de un nodo

@@ -8,7 +8,6 @@ import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from io import BytesIO
-from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import grpc
@@ -20,24 +19,20 @@ from worker.config import WorkerConfig
 from worker.core.filter_parser import infer_output_format, parse_filters
 from worker.core.state_store import EventSpoolStore
 from worker.core.storage import StorageClient
-from worker.grpc.security import build_channel_credentials
 from worker.models.types import ExecutionResultRecord, InputImageRef, NodeState, ProgressEventRecord, Task
 from worker.telemetry.metrics import WorkerMetrics
-from worker.telemetry import tracing as _tracing_helpers
-from worker.telemetry.tracing import grpc_metadata_from_internal, inject_current_context
 
-
+# Definición de tipos para callbacks internos
 StatusProvider = Callable[[], Awaitable[NodeState]]
 SubmitTaskProvider = Callable[[Task], Awaitable[dict[str, object]]]
 StatsProvider = Callable[[], dict[str, int | float]]
 BackgroundTask = asyncio.Task[None]
+
 PROTO = cast(Any, orchestrator_pb2)
 PROTO_GRPC = cast(Any, orchestrator_pb2_grpc)
-TRACING_HELPERS = cast(Any, _tracing_helpers)
-MAYBE_SPAN = TRACING_HELPERS.maybe_span
-
 
 class _ImageTaskPayload(TypedDict):
+    """Payload de una tarea recibida desde el Orquestador."""
     task_id: str
     filename: str
     filter_type: str
@@ -48,6 +43,13 @@ class _ImageTaskPayload(TypedDict):
 
 
 class CoordinatorReporter:
+    """
+    Gestiona la comunicación saliente del Worker hacia el Orquestador Java.
+    Responsable de:
+    1. Enviar Heartbeats (latidos) con métricas del sistema.
+    2. Realizar 'Pull' de nuevas tareas cuando hay capacidad.
+    3. Reportar progreso y resultados finales de las tareas.
+    """
     def __init__(
         self,
         config: WorkerConfig,
@@ -64,6 +66,8 @@ class CoordinatorReporter:
         self._submit_task = submit_task
         self._stats_provider = stats_provider
         self._logger = logging.getLogger("worker.reporter")
+        
+        # Cola interna para asegurar la entrega de eventos incluso si hay micro-cortes
         self._queue: asyncio.Queue[tuple[str, str, ProgressEventRecord | ExecutionResultRecord]] = asyncio.Queue(
             maxsize=config.report_queue_size
         )
@@ -74,21 +78,30 @@ class CoordinatorReporter:
         self._failure_count = 0
         self._connected = False
         self._channel_lock = asyncio.Lock()
+        
+        # Spool: Almacenamiento persistente local para eventos no enviados
         self._spool = EventSpoolStore(storage, state_root_uri)
         self._storage = storage
         self._enabled = bool(config.coordinator_target)
         self._ip_address = self._resolve_ip_address()
 
     async def start(self) -> None:
+        """Inicia los bucles asíncronos de comunicación."""
         if not self._enabled:
             self._logger.info("worker reporter disabled; no coordinator target configured")
             self._metrics.set_coordinator_connected(False)
             self._metrics.set_report_queue_length(0)
             return
+            
         await self._connect()
+        
+        # Cargamos eventos que se quedaron pendientes en disco de ejecuciones anteriores
         for item in self._spool.load_pending():
             await self._queue.put((item.spool_id, item.kind, item.payload))
+            
         self._metrics.set_report_queue_length(self._queue.qsize())
+        
+        # Lanzamos los 3 bucles principales
         self._tasks = [
             asyncio.create_task(self._report_loop(), name="coordinator-report-loop"),
             asyncio.create_task(self._heartbeat_loop(), name="coordinator-heartbeat-loop"),
@@ -96,41 +109,60 @@ class CoordinatorReporter:
         ]
 
     async def stop(self) -> None:
+        """Detiene de forma limpia la comunicación."""
         if not self._enabled:
             return
         self._stop_event.set()
+        
+        # Intentamos vaciar la cola antes de cerrar
         try:
             await asyncio.wait_for(self._queue.join(), timeout=2.0)
         except TimeoutError:
             pass
+            
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+                
         if self._channel is not None:
             await self._channel.close()
         self._metrics.set_coordinator_connected(False)
 
     async def report_progress(self, event: ProgressEventRecord) -> None:
+        """Encola un evento de progreso para ser enviado al orquestador."""
         if not self._enabled:
             return
-        inject_current_context(event.metadata)
+        
+        # Generamos spool de persistencia
         event.metadata["spool_kind"] = "progress"
         spool_id = self._spool.append("progress", event)
         event.metadata["spool_id"] = spool_id
-        await self._queue.put((spool_id, "progress", event))
-        self._metrics.set_report_queue_length(self._queue.qsize())
+        
+        # Encolamos para envío asíncrono. 
+        # NOTA: No usamos 'await' para evitar que lentitud en red bloquee al WorkerNode
+        try:
+            self._queue.put_nowait((spool_id, "progress", event))
+            self._metrics.set_report_queue_length(self._queue.qsize())
+        except asyncio.QueueFull:
+            self._logger.warning("report queue full, dropping progress event", extra={"task_id": event.task_id})
 
     async def report_result(self, result: ExecutionResultRecord) -> None:
+        """Encola el resultado final de una tarea."""
         if not self._enabled:
             return
-        inject_current_context(result.metadata)
         result.metadata["spool_kind"] = "result"
         spool_id = self._spool.append("result", result)
         result.metadata["spool_id"] = spool_id
-        await self._queue.put((spool_id, "result", result))
-        self._metrics.set_report_queue_length(self._queue.qsize())
+        
+        # Los resultados son vitales, usamos await pero con un timeout muy corto para no colgar el flujo
+        try:
+            await asyncio.wait_for(self._queue.put((spool_id, "result", result)), timeout=0.1)
+            self._metrics.set_report_queue_length(self._queue.qsize())
+        except (asyncio.QueueFull, TimeoutError):
+            self._logger.error("CRITICAL: report queue full, could not enqueue result immediately", extra={"task_id": result.task_id})
+            # El resultado ya está en el 'spool' de disco, se intentará enviar en el siguiente reinicio o ciclo
 
     @property
     def connected(self) -> bool:
@@ -141,71 +173,83 @@ class CoordinatorReporter:
         return self._enabled
 
     async def _report_loop(self) -> None:
+        """Bucle que consume la cola de reportes y los envía vía gRPC."""
         while not self._stop_event.is_set() or not self._queue.empty():
             spool_id, kind, payload = await self._queue.get()
             try:
                 await self._send_event(kind, payload)
+                # Si el envío fue exitoso, confirmamos en el spool persistente
                 self._spool.ack(spool_id)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
                 self._logger.warning("coordinator event delivery failed", extra={"extra_data": {"error": str(exc)}})
                 await self._mark_failure()
                 await asyncio.sleep(self._retry_delay())
+                # Re-encolamos para re-intento
                 await self._queue.put((spool_id, kind, payload))
             finally:
                 self._metrics.set_report_queue_length(self._queue.qsize())
                 self._queue.task_done()
 
     async def _send_event(self, kind: str, payload: ProgressEventRecord | ExecutionResultRecord) -> None:
+        """Realiza la llamada gRPC específica según el tipo de evento."""
         stub = await self._ensure_stub()
         started = time.perf_counter()
-        metadata = grpc_metadata_from_internal(payload.metadata)
-        with MAYBE_SPAN(f"worker.callback.{kind}", attributes={"worker.callback.kind": kind}):
-            if kind == "progress":
-                progress_payload = cast(ProgressEventRecord, payload)
-                await stub.UpdateTaskProgress(
-                    self._progress_to_proto(progress_payload),
-                    wait_for_ready=True,
-                    metadata=metadata,
-                )
-            else:
-                result_payload = cast(ExecutionResultRecord, payload)
-                await stub.SubmitResult(
-                    await self._result_to_proto(result_payload),
-                    wait_for_ready=True,
-                    metadata=metadata,
-                )
+        
+        if kind == "progress":
+            progress_payload = cast(ProgressEventRecord, payload)
+            await stub.UpdateTaskProgress(
+                self._progress_to_proto(progress_payload),
+                wait_for_ready=True
+            )
+        else:
+            result_payload = cast(ExecutionResultRecord, payload)
+            proto_result = await self._result_to_proto(result_payload)
+            print(f"[DEBUG] >>> ENVIANDO RESULTADO A JAVA: Tarea={result_payload.task_id}, Bytes={len(proto_result.result_data)}, Exito={proto_result.success}")
+            self._logger.info(f"Enviando resultado gRPC para tarea {result_payload.task_id}")
+            await stub.SubmitResult(
+                proto_result,
+                wait_for_ready=True
+            )
+            
+        # Registramos RTT para métricas internas
         self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
         self._mark_success()
 
     async def _heartbeat_loop(self) -> None:
+        """Bucle de Heartbeat: informa al Orquestador que seguimos vivos cada N segundos."""
         while not self._stop_event.is_set():
             try:
                 status = await self._status_provider()
                 stub = await self._ensure_stub()
                 started = time.perf_counter()
-                with MAYBE_SPAN("worker.callback.heartbeat", attributes={"worker.callback.kind": "heartbeat"}):
-                    await stub.SendHeartbeat(
-                        PROTO.HeartbeatRequest(
-                            node_id=status.node_id,
-                            ip_address=self._ip_address,
-                            metrics=await self._build_node_metrics(status),
-                        ),
-                        wait_for_ready=True,
-                    )
+                
+                await stub.SendHeartbeat(
+                    PROTO.HeartbeatRequest(
+                        node_id=status.node_id,
+                        ip_address=self._ip_address,
+                        metrics=await self._build_node_metrics(status),
+                    ),
+                    wait_for_ready=True,
+                )
                 self._metrics.grpc_rtt_ms.observe((time.perf_counter() - started) * 1000)
                 self._mark_success()
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
                 self._logger.warning("heartbeat failed", extra={"extra_data": {"error": str(exc)}})
                 await self._mark_failure()
             await asyncio.sleep(self._config.heartbeat_interval_seconds)
 
     async def _pull_loop(self) -> None:
+        """Bucle de Pull: pide nuevas tareas al orquestador si tenemos capacidad libre."""
         while not self._stop_event.is_set():
             delay = 1.0
             try:
                 status = await self._status_provider()
-                slots_free = max(self._config.max_active_tasks - status.active_tasks, 0)
+                # REGLA 1: El cálculo de slots debe basarse en la capacidad de la cola local (Backpressure)
+                # No pedimos tareas si la cola ya está en su High Watermark
+                slots_free = max(self._config.queue_high_watermark - status.queue_length, 0)
+                
                 if slots_free > 0:
+                    print(f"[DEBUG] <<< Pidiendo tareas (PULL) al Orquestador. Espacio en cola: {slots_free}/{self._config.queue_high_watermark}")
                     stub = await self._ensure_stub()
                     response = await stub.PullTasks(
                         PROTO.PullRequest(
@@ -216,34 +260,46 @@ class CoordinatorReporter:
                         wait_for_ready=True,
                     )
                     self._mark_success()
+                    # Procesamos las tareas recibidas
+                    if response.tasks:
+                        print(f"[DEBUG] <<< Recibidas {len(response.tasks)} tareas desde el Orquestador")
+                    
                     for image_task in response.tasks:
                         await self._accept_pulled_task(image_task)
+                    
+                    # Si recibimos tareas, reintentamos pronto; si no, esperamos más.
                     delay = 0.25 if response.tasks else 1.0
                 else:
                     delay = 0.5
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
                 self._logger.warning("pull failed", extra={"extra_data": {"error": str(exc)}})
                 await self._mark_failure()
                 delay = self._retry_delay()
             await asyncio.sleep(delay)
 
     async def _accept_pulled_task(self, image_task: Any) -> None:
+        """Mapea una tarea de Proto a nuestro modelo interno e intenta encolarla."""
+        print(f"[DEBUG] Procesando tarea recibida: ID={image_task.task_id}, Filtro={image_task.filter_type}")
         try:
             task = self._task_from_image_task(image_task)
         except Exception as exc:
+            print(f"[DEBUG] ERROR al mapear tarea {image_task.task_id}: {exc}")
             await self._submit_mapping_failure(image_task, str(exc))
             return
 
         reply = await self._submit_task(task)
         if bool(reply.get("accepted")):
+            print(f"[DEBUG] Tarea {task.task_id} ACEPTADA en la cola local")
             return
 
+        print(f"[DEBUG] Tarea {task.task_id} RECHAZADA por la cola local: {reply.get('reason')}")
         await self._submit_mapping_failure(
             image_task,
             str(reply.get("reason") or "worker rejected pulled task"),
         )
 
     async def _submit_mapping_failure(self, image_task: Any, message: str) -> None:
+        """Informa al orquestador si una tarea 'pulled' no pudo ser procesada/mapeada."""
         stub = await self._ensure_stub()
         metrics = await self._build_node_metrics()
         await stub.SubmitResult(
@@ -264,11 +320,13 @@ class CoordinatorReporter:
         self._mark_success()
 
     async def _build_node_metrics(self, status: NodeState | None = None) -> Any:
+        """Construye el mensaje de métricas compartido por Heartbeat y Pull."""
         state = status if status is not None else await self._status_provider()
         memory = psutil.virtual_memory()
         snapshot = self._metrics.snapshot()
         orchestrator_stats = self._stats_provider()
         status_value = self._classify_status(state, orchestrator_stats)
+        
         return PROTO.NodeMetrics(
             node_id=state.node_id,
             ip_address=self._ip_address,
@@ -297,17 +355,25 @@ class CoordinatorReporter:
         )
 
     async def _result_to_proto(self, result: ExecutionResultRecord) -> Any:
+        """Convierte un resultado interno a TaskResult de gRPC."""
         payload = b""
         if result.state.value == "succeeded" and result.output_path:
-            payload = self._storage.read_bytes(result.output_path)
+            try:
+                payload = self._storage.read_bytes(result.output_path)
+                print(f"[DEBUG] Archivo de salida leído: {result.output_path} ({len(payload)} bytes)")
+            except Exception as e:
+                print(f"[DEBUG] ERROR al leer archivo de salida {result.output_path}: {e}")
+            
         started_ms = int(result.started_at.timestamp() * 1000) if result.started_at is not None else 0
         finished_ms = int(result.finished_at.timestamp() * 1000) if result.finished_at is not None else 0
         processing_ms = int(result.metadata.get("processing_ms", "0"))
         metrics = await self._build_node_metrics()
+        
         worker_id = result.metadata.get("worker_id")
         if not worker_id:
             child_pid = result.metadata.get("child_pid")
             worker_id = f"{result.node_id}-pid-{child_pid}" if child_pid else f"{result.node_id}-worker"
+            
         return PROTO.TaskResult(
             task_id=result.task_id,
             node_id=result.node_id,
@@ -322,16 +388,27 @@ class CoordinatorReporter:
         )
 
     def _task_from_image_task(self, image_task: Any) -> Task:
+        """Crea una Task interna desde el mensaje ImageTask de gRPC."""
         payload = bytes(image_task.image_data)
         if not payload:
             raise ValueError("pulled task does not contain image bytes")
-        width, height, detected_format = self._inspect_image(payload)
+            
+        width= image_task.target_width 
+        height= image_task.target_height
+        detected_format= image_task.image_format
+        if not width or not height or not detected_format:
+            # Si no vienen en el proto, intentamos inspeccionar la imagen
+            width, height, detected_format = self._inspect_image(payload)
         filters = self._filters_from_image_task(image_task)
         transforms, explicit_output_format = parse_filters(filters)
+        
         output_format = explicit_output_format or detected_format or infer_output_format(str(image_task.filename), "png")
         created_at = datetime.fromtimestamp(max(int(image_task.enqueue_ts), 0) / 1000, tz=UTC) if int(image_task.enqueue_ts) > 0 else datetime.now(tz=UTC)
+        
+        # Mapeo de prioridades: 0=Baja, 1=Alta en el orquestador
         priority = 9 if int(image_task.priority) > 0 else 5
         filter_type = str(image_task.filter_type or "").strip().lower()
+        
         return Task(
             task_id=str(image_task.task_id),
             idempotency_key=f"orchestrator:{image_task.task_id}",
@@ -358,59 +435,86 @@ class CoordinatorReporter:
         )
 
     def _filters_from_image_task(self, image_task: Any) -> list[str]:
-        filter_type = str(image_task.filter_type or "").strip().lower()
+        """Convierte los parámetros simplificados del orquestador en filtros dsl internos."""
+        raw_filter_type = str(image_task.filter_type or "").strip().lower()
         filters: list[str] = []
+        
+        # Mapa ampliado con TODO tu catálogo de filtros
         simple_filter_map = {
+            "flip": "flip",
+            "crop": "crop",
             "grayscale": "grayscale",
+            "brightness": "brightness",
+            "contrast": "contrast",
+            "brightness_contrast": "brightness_contrast",
+            "rotate": "rotate",
+            "resize": "resize",
+            "sharpen": "sharpen",
+            "watermark": "watermark",
+            "watermark_text": "watermark_text",
             "blur": "blur",
             "ocr": "ocr",
             "inference": "inference",
+            # Mantenidos por compatibilidad en caso de que los uses
+            "sepia": "sepia",
+            "invert": "invert",
         }
 
-        if filter_type in {"", "none"}:
-            pass
-        elif filter_type == "thumbnail":
-            if int(image_task.target_width) <= 0 or int(image_task.target_height) <= 0:
-                raise ValueError("thumbnail task requires target_width and target_height")
-        elif filter_type in simple_filter_map:
-            filters.append(simple_filter_map[filter_type])
-        else:
-            raise ValueError(f"unsupported orchestrator filter_type '{filter_type}'")
+        # Soportamos múltiples filtros separados por coma (ej: "grayscale,blur,format:png")
+        parts = [p.strip() for p in raw_filter_type.split(",") if p.strip()]
+        
+        for filter_type in parts:
+            if filter_type in {"", "none"}:
+                continue
+            elif filter_type == "thumbnail":
+                if int(image_task.target_width) <= 0 or int(image_task.target_height) <= 0:
+                    raise ValueError("thumbnail task requires target_width and target_height")
+                # thumbnail es un alias para un resize inteligente
+                filters.append(f"resize:{int(image_task.target_width)}x{int(image_task.target_height)}")
+                
+            elif filter_type in simple_filter_map:
+                filters.append(simple_filter_map[filter_type])
+                
+            elif ":" in filter_type:
+                # Esto soporta automáticamente todas tus conversiones (format:bmp, format:jpg, format:png, etc.)
+                # Y también parámetros directos (ej: "rotate:90", "brightness:1.2")
+                filters.append(filter_type)
+                
+            else:
+                self._logger.warning(f"unsupported filter_type '{filter_type}' ignored")
 
-        if int(image_task.target_width) > 0 and int(image_task.target_height) > 0:
+        # El resize por campos explícitos tiene prioridad final si no se incluyó explícitamente en el string
+        has_resize = any(f.startswith("resize") for f in filters)
+        if not has_resize and int(image_task.target_width) > 0 and int(image_task.target_height) > 0:
             filters.append(f"resize:{int(image_task.target_width)}x{int(image_task.target_height)}")
+            
         return filters
 
     def _inspect_image(self, payload: bytes) -> tuple[int, int, str]:
+        """Analiza los bytes de la imagen para obtener dimensiones y formato."""
         with Image.open(BytesIO(payload)) as image:
             width, height = image.size
             detected_format = (image.format or "png").lower()
         return width, height, detected_format
 
     async def _connect(self) -> None:
+        """Establece la conexión gRPC con el Orquestador."""
         async with self._channel_lock:
             target = self._config.coordinator_target
             if target is None:
                 raise RuntimeError("coordinator target is required when reporter is enabled")
             if self._channel is not None:
                 await self._channel.close()
+                
             options: list[tuple[str, int | str]] = [
                 ("grpc.keepalive_time_ms", 10_000),
                 ("grpc.keepalive_timeout_ms", 5_000),
                 ("grpc.keepalive_permit_without_calls", 1),
                 ("grpc.http2.max_pings_without_data", 0),
             ]
-            if self._config.coordinator_server_name_override:
-                options.append(("grpc.ssl_target_name_override", self._config.coordinator_server_name_override))
-            channel_credentials = build_channel_credentials(
-                root_ca_file=self._config.coordinator_ca_file,
-                cert_chain_file=self._config.coordinator_client_cert_file,
-                private_key_file=self._config.coordinator_client_key_file,
-            )
-            if channel_credentials is None:
-                self._channel = grpc.aio.insecure_channel(target, options=options)
-            else:
-                self._channel = grpc.aio.secure_channel(target, channel_credentials, options=options)
+            
+            # Conexión insegura simplificada (sin TLS configurado por ahora)
+            self._channel = grpc.aio.insecure_channel(target, options=options)
             self._stub = PROTO_GRPC.OrchestratorStub(self._channel)
 
     async def _ensure_stub(self) -> Any:
@@ -428,13 +532,16 @@ class CoordinatorReporter:
         self._connected = False
         self._metrics.set_coordinator_connected(False)
         if self._failure_count >= self._config.coordinator_failure_threshold:
+            # Reintentamos reconexión completa tras varios fallos
             await self._connect()
 
     def _retry_delay(self) -> float:
+        """Backoff exponencial para reintentos de conexión."""
         delay = self._config.coordinator_reconnect_base_seconds * (2 ** max(0, self._failure_count - 1))
         return min(delay, self._config.coordinator_reconnect_max_seconds)
 
     def _resolve_ip_address(self) -> str:
+        """Determina la IP local del worker para informar al orquestador."""
         host = self._config.bind_host.strip()
         if host and host not in {"0.0.0.0", "::", "127.0.0.1", "localhost"}:
             return host
@@ -443,6 +550,7 @@ class CoordinatorReporter:
         return "127.0.0.1"
 
     def _classify_status(self, state: NodeState, orchestrator_stats: dict[str, int | float]) -> str:
+        """Determina el estado textual del nodo para el panel del orquestador."""
         if state.mode.value != "active" or not state.accepting_tasks:
             return "ERROR"
         if float(orchestrator_stats["recent_steal_age_seconds"]) <= 5.0:
