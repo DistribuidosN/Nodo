@@ -11,7 +11,7 @@ from uuid import uuid4
 from PIL import Image, UnidentifiedImageError
 
 from worker.core.filter_parser import infer_output_format, parse_filters
-from worker.models.types import ExecutionResultRecord, InputImageRef, Task, TaskState
+from worker.domain.models import ExecutionResultRecord, InputImageRef, Task, TaskState
 
 
 class BusinessRequestError(Exception):

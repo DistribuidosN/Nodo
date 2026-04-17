@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from math import isclose
 
-from worker.models.types import OperationType, Task, TransformationSpec
+from worker.domain.models import OperationType, Task, TransformationSpec
 
 
 BASE_OPERATION_COST_WEIGHTS: dict[OperationType, float] = {

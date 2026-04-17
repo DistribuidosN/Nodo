@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from worker.models.types import OperationType, TransformationSpec
+from worker.domain.models import OperationType, TransformationSpec
 
 
 def infer_output_format(file_name: str | None, fallback: str = "png") -> str:

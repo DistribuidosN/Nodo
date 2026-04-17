@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from worker.config import WorkerConfig
-from worker.models.types import Task
+from worker.domain.models import Task
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:

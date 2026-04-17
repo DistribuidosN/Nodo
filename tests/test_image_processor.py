@@ -12,9 +12,10 @@ from PIL import Image, ImageChops
 
 import pytest
 
-from worker.core.storage import StorageClient
-from worker.execution.image_processor import TaskCancelledError, process_image
-from worker.models.types import InputImageRef, OperationType, Task, TransformationSpec
+from worker.infrastructure.adapters.storage.local_storage_adapter import LocalStorageAdapter
+from worker.infrastructure.adapters.image.pillow_adapter import PillowAdapter
+from worker.domain.models import InputImageRef, OperationType, Task, TransformationSpec
+from worker.domain.exceptions import TaskCancelledError
 
 
 def make_payload() -> bytes:
@@ -49,7 +50,8 @@ def test_process_image_pipeline(tmp_path):
         output_format="jpg",
     )
 
-    output_path, output_format, width, height, size_bytes, metadata = process_image(task, str(tmp_path))
+    adapter = PillowAdapter(LocalStorageAdapter())
+    output_path, output_format, width, height, size_bytes, metadata = adapter.process_task(task, str(tmp_path))
     assert output_format == "jpg"
     assert width == 60
     assert height == 45
@@ -96,8 +98,9 @@ def test_process_image_cancels_mid_resize(tmp_path):
 
     thread = threading.Thread(target=trigger_cancel, daemon=True)
     thread.start()
+    adapter = PillowAdapter(LocalStorageAdapter())
     with pytest.raises(TaskCancelledError):
-        process_image(task, str(tmp_path))
+        adapter.process_task(task, str(tmp_path))
     thread.join(timeout=1.0)
 
 
@@ -129,10 +132,10 @@ def test_process_image_supports_input_uri_and_local_output(tmp_path):
         output_format="png",
     )
 
-    output_path, output_format, width, height, _size_bytes, metadata = process_image(
+    adapter = PillowAdapter(LocalStorageAdapter())
+    output_path, output_format, width, height, _size_bytes, metadata = adapter.process_task(
         task,
-        str(tmp_path / "local-out"),
-        storage,
+        str(tmp_path / "local-out")
     )
 
     assert Path(output_path).exists()
@@ -163,7 +166,8 @@ def test_process_image_rotate_ninety_keeps_expected_dimensions(tmp_path):
         output_format="png",
     )
 
-    output_path, output_format, width, height, size_bytes, _metadata = process_image(task, str(tmp_path))
+    adapter = PillowAdapter(LocalStorageAdapter())
+    output_path, output_format, width, height, size_bytes, _metadata = adapter.process_task(task, str(tmp_path))
 
     assert output_format == "png"
     assert width == 90
@@ -214,7 +218,8 @@ def test_process_image_watermark_changes_pixels_on_light_background(tmp_path):
         output_format="png",
     )
 
-    output_path, _output_format, _width, _height, _size_bytes, _metadata = process_image(task, str(tmp_path))
+    adapter = PillowAdapter(LocalStorageAdapter())
+    output_path, _output_format, _width, _height, _size_bytes, _metadata = adapter.process_task(task, str(tmp_path))
 
     saved = Image.open(output_path).convert("RGB")
     diff = ImageChops.difference(image, saved)
@@ -262,7 +267,8 @@ def test_process_image_runs_ocr_and_inference_adapters(tmp_path):
         metadata={"ocr_command": command, "inference_command": command},
     )
 
-    _output_path, _output_format, _width, _height, _size_bytes, metadata = process_image(task, str(tmp_path))
+    adapter = PillowAdapter(LocalStorageAdapter())
+    _output_path, _output_format, _width, _height, _size_bytes, metadata = adapter.process_task(task, str(tmp_path))
 
     assert metadata["ocr_text"] == "hello world"
     assert metadata["ocr_ocr_engine"] == "stub"
@@ -304,7 +310,8 @@ def test_process_image_supports_additional_output_formats(tmp_path, output_forma
         output_format=output_format,
     )
 
-    output_path, actual_format, width, height, size_bytes, _metadata = process_image(task, str(tmp_path))
+    adapter = PillowAdapter(LocalStorageAdapter())
+    output_path, actual_format, width, height, size_bytes, _metadata = adapter.process_task(task, str(tmp_path))
     assert actual_format == output_format
     assert width == 96
     assert height == 96

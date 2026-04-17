@@ -1,33 +1,87 @@
-# Distributed Image Workers
+# 🚀 Distributed Image Worker (Hexagonal Edition)
 
-Repositorio de workers en Python para procesamiento de imagenes por gRPC.
+Worker inteligente en Python diseñado para el procesamiento paralelo de imágenes en sistemas distribuidos. Este nodo utiliza una **Arquitectura Hexagonal (Puertos y Adaptadores)** para garantizar modularidad, testabilidad y un desacoplamiento total de la infraestructura.
 
-Arquitectura final del sistema:
+---
 
-```text
-Cliente -> Servidor principal Java -> Workers Python
+## 🏗️ Arquitectura del Sistema
+
+El Worker sigue los principios de **Clean Architecture**, dividiendo las responsabilidades en capas concéntricas:
+
+```mermaid
+graph TD
+    subgraph Infrastructure ["Capa de Infraestructura (Adaptadores)"]
+        GRPC_In["gRPC Inbound Servant"]
+        GRPC_Out["gRPC Coordinator Adapter"]
+        Storage["Local Storage Adapter"]
+        Engine["Pillow Processing Adapter"]
+    end
+
+    subgraph Application ["Capa de Aplicación (Servicios/Puertos)"]
+        Comm["Communication Service (Work-Stealing)"]
+        SP["Storage Port"]
+        IP["Image Processor Port"]
+    end
+
+    subgraph Core ["Capa de Dominio (Núcleo)"]
+        Node["Worker Node (Orquestador Local)"]
+        Exec["Execution Manager (Multiprocesamiento)"]
+        Models["Domain Models (Task, Result)"]
+    end
+
+    GRPC_In --> Node
+    Node --> Comm
+    Comm --> GRPC_Out
+    Node --> IP
+    IP --> Engine
+    Node --> SP
+    SP --> Storage
+    Node --> Exec
 ```
 
-El servidor principal en Java se encarga de:
-- autenticacion
-- base de datos
-- logica de negocio
-- decision de a que worker enviar cada tarea
-- metricas historicas
-- graficas y paneles
+---
 
-Este repositorio deja listo solo el lado de los workers.
+## 📂 Estructura de Carpetas
 
-## Que expone cada worker
+```text
+Nodo/
+├── worker/                     # Código fuente raíz
+│   ├── application/            # Casos de uso y contratos (Puertos)
+│   │   ├── ports/              # Interfaces (IP, Storage, Coordinator)
+│   │   └── services/           # Lógica de comunicación (Work-Stealing)
+│   ├── domain/                 # Modelos de negocio puros y excepciones
+│   ├── infrastructure/         # Implementaciones concretas (Adaptadores)
+│   │   └── adapters/           # gRPC, Storage y Pillow (Engine)
+│   ├── core/                   # Núcleo del nodo y gestión de estado
+│   ├── grpc/                   # Adaptadores de entrada gRPC
+│   └── server.py               # Composition Root (Punto de entrada)
+├── proto/                      # Definiciones gRPC compartidas
+├── tests/                      # Suite de pruebas unitarias e integración
+└── data/                       # Almacenamiento local (Input, Output, State)
+```
 
+---
+
+## ⚙️ Cómo Funciona el Sistema
+
+### 🧠 Modelo de Trabajo: Work-Stealing (PULL)
+A diferencia de los sistemas tradicionales donde el servidor "empuja" tareas, este worker es **proactivo**:
+1. El `CommunicationService` solicita tareas al Orquestador Java cuando el nodo tiene capacidad libre.
+2. Si el Orquestador tiene trabajo, el worker lo "roba" (Stealing) y lo añade a su cola de prioridad local.
+3. El `ExecutionManager` procesa las imágenes en **procesos independientes** para evitar el Python GIL (Global Interpreter Lock), garantizando un uso real de los núcleos del CPU.
+
+<<<<<<< Updated upstream
 Cada worker levanta un servidor gRPC con dos contratos:
+=======
+### 💾 Persistencia de Estado
+El nodo es **tolerante a fallos**. Guarda su estado (tareas pendientes y resultados no enviados) en `data/state/`. Si el worker se reinicia, cargará las tareas pendientes y las reanudará automáticamente.
+>>>>>>> Stashed changes
 
-- `imagenode.ImageNodeService`
-  Contrato de negocio para pedir procesamiento de imagenes.
+---
 
-- `worker.WorkerControlService`
-  Contrato de control del nodo para consultar estado, enviar tareas, cancelar, drenar o apagar.
+## 🚀 Ejecución del Proyecto
 
+<<<<<<< Updated upstream
 Protos:
 
 - [proto/imagenode.proto](proto/imagenode.proto)
@@ -96,92 +150,36 @@ Puertos por defecto:
 - Metrics: `http://127.0.0.1:9100/metrics`
 
 Uso:
+=======
+### 1. Requisitos Previos
+- Python 3.11+
+- [Pillow](https://python-pillow.org/) para procesamiento de imágenes.
+- [gRPC](https://grpc.io/) para comunicación industrial.
+>>>>>>> Stashed changes
 
+### 2. Ejecución Local (Python)
+Instala las dependencias y lanza el nodo:
 ```powershell
-docker compose up -d --build
-docker compose ps
-```
+# Instalar dependencias
+pip install -r requirements.txt
 
-Para apagar:
-
-```powershell
-docker compose down
-```
-
-### 2. Desarrollo local: tres workers locales
-
-Archivo:
-
-- [docker-compose-dev.yml](docker-compose-dev.yml)
-
-Este modo levanta:
-
-- `worker1`
-- `worker2`
-- `worker3`
-
-Uso:
-
-```powershell
-python scripts/dev/generate_dev_security_assets.py
-docker compose -f docker-compose-dev.yml up -d --build
-docker compose -f docker-compose-dev.yml ps
-```
-
-Para apagar:
-
-```powershell
-docker compose -f docker-compose-dev.yml down
-```
-
-## Configuracion
-
-### Produccion
-
-Plantilla:
-
-- [.env.production.example](.env.production.example)
-
-Variables importantes:
-
-- `WORKER_NODE_ID`
-- `WORKER_BIND_HOST`
-- `WORKER_BIND_PORT`
-- `WORKER_COORDINATOR_TARGET`
-- `WORKER_INPUT_DIR`
-- `WORKER_OUTPUT_DIR`
-- `WORKER_STATE_DIR`
-- `WORKER_METRICS_PORT`
-- `WORKER_HEALTH_PORT`
-
-### Desarrollo local
-
-Plantilla:
-
-- [.env.example](.env.example)
-
-## Correr un worker sin Docker
-
-Instalar dependencias:
-
-```powershell
-python -m pip install -e .[dev]
-```
-
-Levantar el worker:
-
-```powershell
+# Ejecutar el worker
 python -m worker
 ```
 
-Entrada equivalente explicita:
-
+### 3. Ejecución con Docker
+Ideal para despliegues escalables:
 ```powershell
-python -m worker.server
+# Levantar un nodo individual
+docker compose up -d --build
+
+# Levantar entorno de desarrollo (3 nodos)
+docker compose -f docker-compose-dev.yml up -d
 ```
 
-## Probar el worker
+---
 
+<<<<<<< Updated upstream
 ### Enviar una tarea al contrato de control
 
 ```powershell
@@ -193,20 +191,29 @@ python examples/submit_task.py --target 127.0.0.1:50051
 ```powershell
 python examples/send_real_image.py --file "C:\ruta\imagen.png" --target 127.0.0.1:50051 --filter grayscale
 ```
+=======
+## 🛠️ Configuración (.env)
 
-### Ver salud
+El archivo `.env` controla el comportamiento del nodo sin cambiar el código:
+>>>>>>> Stashed changes
 
-En navegador:
+| Variable | Descripción | Default |
+| :--- | :--- | :--- |
+| `WORKER_NODE_ID` | Nombre único del nodo | hostname |
+| `WORKER_BIND_PORT` | Puerto gRPC del worker | 50051 |
+| `WORKER_COORDINATOR_TARGET` | Dirección del Orquestador Java | 127.0.0.1:50052 |
+| `WORKER_MAX_ACTIVE_TASKS` | Tareas paralelas máximas | CPU cores |
+| `WORKER_LOG_LEVEL` | Nivel de detalle (DEBUG, INFO) | INFO |
 
-- `http://127.0.0.1:8081/livez`
-- `http://127.0.0.1:8081/readyz`
+---
 
-O en terminal:
-
+## 🧪 Pruebas
+El proyecto incluye una suite de pruebas exhaustiva que valida la arquitectura:
 ```powershell
-curl http://127.0.0.1:8081/readyz
+python -m pytest tests/
 ```
 
+<<<<<<< Updated upstream
 ## Como se integra el servidor principal Java
 
 Flujo esperado:
@@ -326,3 +333,8 @@ El proyecto queda preparado para:
 - usar storage local por nodo para entradas, salidas y estado
 - dejar la coordinacion real en el servidor principal Java
 - mantener un entorno local separado para pruebas con varios workers
+=======
+---
+> [!TIP]
+> **Diseño Hexagonal**: Si deseas cambiar el motor de procesamiento (ej: de Pillow a OpenCV) o el almacenamiento (ej: de Local a S3), solo tienes que crear un nuevo **Adaptador** e inyectarlo en `server.py`. El núcleo del sistema permanecerá intacto.
+>>>>>>> Stashed changes

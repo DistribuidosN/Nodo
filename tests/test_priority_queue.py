@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from worker.config import WorkerConfig
-from worker.models.types import InputImageRef, OperationType, Task, TransformationSpec
+from worker.domain.models import InputImageRef, OperationType, Task, TransformationSpec
 from worker.scheduler.priority_queue import TaskPriorityQueue
 from worker.scheduler.scoring import TaskScorer
 
@@ -17,16 +17,11 @@ def make_config(tmp_path):
         bind_host="127.0.0.1",
         bind_port=50051,
         coordinator_target="127.0.0.1:50052",
-        metrics_host="127.0.0.1",
-        metrics_port=9101,
-        health_host="127.0.0.1",
-        health_port=18081,
         input_dir=tmp_path / "input",
         output_dir=tmp_path / "output",
         state_dir=tmp_path / "state",
         max_active_tasks=2,
         process_pool_workers=1,
-        thread_pool_workers=2,
         cpu_target=0.85,
         max_queue_size=32,
         queue_high_watermark=24,
@@ -46,8 +41,6 @@ def make_config(tmp_path):
         coordinator_reconnect_max_seconds=1.0,
         coordinator_failure_threshold=2,
         graceful_shutdown_timeout_seconds=2.0,
-        process_cancel_grace_seconds=0.1,
-        process_kill_timeout_seconds=1.0,
         log_level="INFO",
     )
 

@@ -10,11 +10,12 @@ from PIL import Image
 
 from worker.config import WorkerConfig
 from worker.core.node import WorkerNode
-from worker.core.storage import StorageClient
+from worker.infrastructure.adapters.storage.local_storage_adapter import LocalStorageAdapter
+from worker.infrastructure.adapters.image.pillow_adapter import PillowAdapter
 from worker.core.state_store import EventSpoolStore, PendingTaskStore
 from worker.execution.execution_manager import ExecutionManager
-from worker.execution.image_processor import TaskCancelledError, process_image
-from worker.models.types import (
+from worker.domain.exceptions import TaskCancelledError
+from worker.domain.models import (
     ExecutionResultRecord,
     InputImageRef,
     OperationType,
@@ -34,16 +35,11 @@ def build_config(tmp_path, metrics_port: int, health_port: int) -> WorkerConfig:
         bind_host="127.0.0.1",
         bind_port=50061,
         coordinator_target="127.0.0.1:59999",
-        metrics_host="127.0.0.1",
-        metrics_port=metrics_port,
-        health_host="127.0.0.1",
-        health_port=health_port,
         input_dir=tmp_path / "input",
         output_dir=tmp_path / "output",
         state_dir=tmp_path / "state",
         max_active_tasks=2,
         process_pool_workers=1,
-        thread_pool_workers=2,
         cpu_target=0.85,
         max_queue_size=16,
         queue_high_watermark=12,
@@ -63,8 +59,6 @@ def build_config(tmp_path, metrics_port: int, health_port: int) -> WorkerConfig:
         coordinator_reconnect_max_seconds=1.0,
         coordinator_failure_threshold=2,
         graceful_shutdown_timeout_seconds=2.0,
-        process_cancel_grace_seconds=0.1,
-        process_kill_timeout_seconds=1.0,
         log_level="INFO",
     )
 
@@ -110,9 +104,12 @@ async def test_worker_restores_pending_queue(tmp_path):
     payload = build_payload()
     task = make_task("queued-task", payload=payload)
     task.next_eligible_at_monotonic = 10**12
-    PendingTaskStore(config.state_dir).upsert(task)
+    storage = LocalStorageAdapter()
+    PendingTaskStore(storage, config.state_dir).upsert(task)
 
-    node = WorkerNode(config=config, metrics=WorkerMetrics())
+    storage = LocalStorageAdapter()
+    processor = PillowAdapter(storage)
+    node = WorkerNode(config=config, metrics=WorkerMetrics(), storage=storage, processor=processor)
     await node.start()
     state = await node.get_node_state()
     await node.close()
@@ -121,7 +118,8 @@ async def test_worker_restores_pending_queue(tmp_path):
 
 
 def test_event_spool_store_roundtrip(tmp_path):
-    spool = EventSpoolStore(tmp_path / "state")
+    storage = LocalStorageAdapter()
+    spool = EventSpoolStore(storage, tmp_path / "state")
     progress = ProgressEventRecord(
         task_id="task-1",
         image_id="image-1",
@@ -159,7 +157,7 @@ def test_event_spool_store_roundtrip(tmp_path):
 
 
 def test_event_spool_store_supports_file_uri_backend(tmp_path):
-    storage = StorageClient()
+    storage = LocalStorageAdapter()
     root_uri = (tmp_path / "shared-state").resolve().as_uri()
     spool = EventSpoolStore(storage, root_uri)
     progress = ProgressEventRecord(
@@ -190,8 +188,9 @@ def test_process_image_honors_cancel_token(tmp_path):
         TransformationSpec(operation=OperationType.GRAYSCALE, params={"delay_ms": "50"}),
     ]
 
+    adapter = PillowAdapter(LocalStorageAdapter())
     with pytest.raises(TaskCancelledError):
-        process_image(task, str(tmp_path))
+        adapter.process_task(task, str(tmp_path))
 
 
 @pytest.mark.asyncio

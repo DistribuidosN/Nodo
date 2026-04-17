@@ -8,13 +8,20 @@ from datetime import UTC, datetime
 import grpc
 import pytest
 from PIL import Image
-from google.protobuf.timestamp_pb2 import Timestamp
 
+<<<<<<< Updated upstream
 from proto import worker_node_pb2, worker_node_pb2_grpc
+=======
+from proto import orchestrator_pb2, orchestrator_pb2_grpc
+>>>>>>> Stashed changes
 from worker.config import WorkerConfig
 from worker.core.node import WorkerNode
-from worker.grpc.servicer import WorkerControlServicer
 from worker.telemetry.metrics import WorkerMetrics
+
+# Nuevas importaciones hexagonales para el setup del test
+from worker.infrastructure.adapters.storage.local_storage_adapter import LocalStorageAdapter
+from worker.infrastructure.adapters.grpc.grpc_coordinator_adapter import GrpcCoordinatorAdapter
+from worker.application.services.communication_service import CommunicationService
 
 
 def free_port() -> int:
@@ -27,24 +34,17 @@ def build_config(
     tmp_path,
     worker_port: int,
     coordinator_port: int | None,
-    metrics_port: int,
-    health_port: int,
 ) -> WorkerConfig:
     return WorkerConfig(
         node_id="integration-node",
         bind_host="127.0.0.1",
         bind_port=worker_port,
         coordinator_target=f"127.0.0.1:{coordinator_port}" if coordinator_port is not None else None,
-        metrics_host="127.0.0.1",
-        metrics_port=metrics_port,
-        health_host="127.0.0.1",
-        health_port=health_port,
         input_dir=tmp_path / "input",
         output_dir=tmp_path / "output",
         state_dir=tmp_path / "state",
         max_active_tasks=2,
         process_pool_workers=1,
-        thread_pool_workers=2,
         cpu_target=0.85,
         max_queue_size=16,
         queue_high_watermark=12,
@@ -64,8 +64,6 @@ def build_config(
         coordinator_reconnect_max_seconds=1.0,
         coordinator_failure_threshold=2,
         graceful_shutdown_timeout_seconds=2.0,
-        process_cancel_grace_seconds=0.1,
-        process_kill_timeout_seconds=1.0,
         log_level="INFO",
     )
 
@@ -101,12 +99,18 @@ class MockCoordinator(worker_node_pb2_grpc.CoordinatorCallbackServiceServicer):
 
 
 @pytest.mark.asyncio
+<<<<<<< Updated upstream
 async def test_worker_processes_and_reports_task(tmp_path):
     worker_port = free_port()
+=======
+async def test_worker_pulls_task_from_orchestrator_and_submits_result(tmp_path):
+    # 1. Setup del puerto y el MockCoordinator
+>>>>>>> Stashed changes
     coordinator_port = free_port()
     metrics_port = free_port()
     health_port = free_port()
     coordinator = MockCoordinator()
+<<<<<<< Updated upstream
 
     coordinator_server = grpc.aio.server()
     worker_node_pb2_grpc.add_CoordinatorCallbackServiceServicer_to_server(coordinator, coordinator_server)
@@ -271,3 +275,72 @@ async def test_worker_can_run_without_embedded_coordinator(tmp_path):
 
     await worker_server.stop(grace=3)
     await node.close()
+=======
+    
+    # Preparamos una tarea para ser "comprada" por el worker
+    payload = build_payload()
+    coordinator.pulled_tasks.append(
+        orchestrator_pb2.ImageTask(
+            task_id="pulled-task",
+            image_data=payload,
+            filename="pulled.png",
+            filter_type="grayscale",
+            target_width=80,
+            target_height=60,
+            enqueue_ts=int(datetime.now(tz=UTC).timestamp() * 1000),
+            priority=1,
+        )
+    )
+
+    # 2. Iniciamos el servidor Mock del Orquestador
+    coordinator_server = grpc.aio.server()
+    orchestrator_pb2_grpc.add_OrchestratorServicer_to_server(coordinator, coordinator_server)
+    coordinator_server.add_insecure_port(f"127.0.0.1:{coordinator_port}")
+    await coordinator_server.start()
+
+    # 3. Configuramos y ensamblamos el Worker de forma Hexagonal
+    config = build_config(tmp_path, free_port(), coordinator_port)
+    metrics = WorkerMetrics()
+    storage = LocalStorageAdapter()
+    
+    # Adaptador de salida (hacia el orquestador)
+    coordinator_adapter = GrpcCoordinatorAdapter(
+        target=f"127.0.0.1:{coordinator_port}",
+        node_id=config.node_id,
+        storage=storage
+    )
+    
+    processor = PillowAdapter(storage)
+    node = WorkerNode(config=config, metrics=metrics, storage=storage, processor=processor)
+    
+    # Servicio de Aplicación que orquesta la comunicación
+    comm_service = CommunicationService(
+        task_provider=coordinator_adapter,
+        result_reporter=coordinator_adapter,
+        heartbeat_port=coordinator_adapter,
+        status_provider=node.get_node_state,
+        submit_task=node.submit_task,
+        heartbeat_interval=0.1 # Rápido para el test
+    )
+    
+    # Inyectamos y arrancamos
+    node._communication = comm_service
+    await node.start()
+
+    # 4. Verificación
+    # Esperamos a que el worker haga PULL, procese y haga SUBMIT
+    await asyncio.wait_for(coordinator.result_event.wait(), timeout=10)
+    
+    result = coordinator.results[-1]
+    assert result.task_id == "pulled-task"
+    assert result.success is True
+    assert result.result_data
+    assert len(coordinator.pull_requests) > 0
+    
+    # Verificamos que se haya guardado en el storage local también
+    assert (tmp_path / "output" / "pulled-task.png").exists()
+
+    # 5. Cleanup
+    await node.close()
+    await coordinator_server.stop(grace=1)
+>>>>>>> Stashed changes

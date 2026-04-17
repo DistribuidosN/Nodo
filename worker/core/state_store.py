@@ -14,8 +14,8 @@ from worker.core.serde import (
     task_from_dict,
     task_to_dict,
 )
-from worker.core.storage import StorageClient
-from worker.models.types import ExecutionResultRecord, PersistedTaskRecord, ProgressEventRecord, SpoolEventRecord, Task
+from worker.application.ports.storage import StoragePort
+from worker.domain.models import ExecutionResultRecord, PersistedTaskRecord, ProgressEventRecord, SpoolEventRecord, Task
 
 
 def _safe_name(value: str) -> str:
@@ -23,13 +23,9 @@ def _safe_name(value: str) -> str:
 
 
 class StateStore:
-    def __init__(self, storage: StorageClient | str, root_uri: str | None = None) -> None:
-        if isinstance(storage, StorageClient):
-            self._storage = storage
-            self._root_uri = root_uri or ""
-        else:
-            self._storage = StorageClient()
-            self._root_uri = str(storage)
+    def __init__(self, storage: StoragePort, root_uri: str) -> None:
+        self._storage = storage
+        self._root_uri = root_uri
         self._completed_dir = self._storage.join(self._root_uri, "completed_tasks")
         self._legacy_state_file = self._storage.join(self._root_uri, "completed_tasks.jsonl")
 
@@ -83,13 +79,9 @@ class StateStore:
 
 
 class PendingTaskStore:
-    def __init__(self, storage: StorageClient | str, root_uri: str | None = None) -> None:
-        if isinstance(storage, StorageClient):
-            self._storage = storage
-            self._pending_dir = self._storage.join(root_uri or "", "pending_tasks")
-        else:
-            self._storage = StorageClient()
-            self._pending_dir = self._storage.join(str(storage), "pending_tasks")
+    def __init__(self, storage: StoragePort, root_uri: str) -> None:
+        self._storage = storage
+        self._pending_dir = self._storage.join(root_uri, "pending_tasks")
 
     def ensure(self) -> None:
         self._storage.mkdir(self._pending_dir)
@@ -114,13 +106,9 @@ class PendingTaskStore:
 
 
 class EventSpoolStore:
-    def __init__(self, storage: StorageClient | str, root_uri: str | None = None) -> None:
-        if isinstance(storage, StorageClient):
-            self._storage = storage
-            self._spool_dir = self._storage.join(root_uri or "", "event_spool")
-        else:
-            self._storage = StorageClient()
-            self._spool_dir = self._storage.join(str(storage), "event_spool")
+    def __init__(self, storage: StoragePort, root_uri: str) -> None:
+        self._storage = storage
+        self._spool_dir = self._storage.join(root_uri, "event_spool")
 
     def ensure(self) -> None:
         self._storage.mkdir(self._spool_dir)

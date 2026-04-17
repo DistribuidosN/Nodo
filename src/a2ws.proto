@@ -22,6 +22,7 @@ option java_multiple_files  = true;
 
 // Tarea de imagen publicada por el orquestador
 message ImageTask {
+<<<<<<< Updated upstream:src/a2ws.proto
   string task_id      = 1;   // UUID único de la tarea
   bytes  image_data   = 2;   // imagen cruda (JPEG / PNG / WebP)
   string filename     = 3;   // nombre original del archivo
@@ -30,6 +31,18 @@ message ImageTask {
   int32  target_height= 6;   // alto deseado  (0 = sin cambio)
   int64  enqueue_ts   = 7;   // epoch-ms cuando el orquestador encoló la tarea
   int32  priority     = 8;   // 0 = normal · 1 = alta (burst)
+=======
+  string task_id = 1;
+  bytes image_data = 2;      // <-- ¡AQUÍ VIAJAN LOS BITS! (Adiós Base64)
+  string filename = 3;       // Ej: "reloj.png"
+  string filter_type = 4;    // Ej: "blur", "ocr", "grayscale"
+  int64 enqueue_ts = 5;      // Tiempo en el que entró a la cola
+  int32 priority = 6;        // Prioridad (0 por defecto)
+  int32 target_width = 7;    // (Opcional) Ancho a redimensionar
+  int32 target_height = 8;   // (Opcional) Alto a redimensionar
+  string image_format = 9;   // (Opcional) Formato de la imagen  
+  map<string, string> metadata = 10; // Metadatos de contexto opcionales
+>>>>>>> Stashed changes:proto/orchestrator.proto
 }
 
 // Métricas en tiempo real de un nodo
@@ -67,6 +80,7 @@ message PullResponse {
 // ─── Submit (nodo entrega resultado al orquestador) ──────────────────────────
 
 message TaskResult {
+<<<<<<< Updated upstream:src/a2ws.proto
   string      task_id       = 1;
   string      node_id       = 2;
   string      worker_id     = 3;   // "node-1-w3"
@@ -77,6 +91,19 @@ message TaskResult {
   int64       finish_ts     = 8;   // epoch-ms fin
   int32       processing_ms = 9;
   NodeMetrics metrics       = 10;  // snapshot justo después de terminar
+=======
+  string task_id = 1;
+  string node_id = 2;
+  string worker_id = 3;    // "node-1-w3"
+  bool success = 4;
+  bytes result_data = 5;   // <-- ¡AQUÍ VUELVEN LOS BITS PROCESADOS!
+  string error_msg = 6;    // vacío si success=true
+  int64 start_ts = 7;      // epoch-ms inicio procesamiento
+  int64 finish_ts = 8;     // epoch-ms fin
+  int32 processing_ms = 9; // Cuántos milisegundos le tomó a Python
+  NodeMetrics metrics = 10; // snapshot justo después de terminar
+  map<string, string> metadata = 11; // Metadatos enriquecidos (OCR, Inferencia, etc.)
+>>>>>>> Stashed changes:proto/orchestrator.proto
 }
 
 // ─── Work-Stealing ────────────────────────────────────────────────────────────
