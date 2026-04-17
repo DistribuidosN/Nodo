@@ -6,7 +6,7 @@ import math
 import psutil
 
 from worker.config import WorkerConfig
-from worker.models.types import ResourceRequirements, ResourceSnapshot, Task
+from worker.domain.models import ResourceRequirements, ResourceSnapshot, Task
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:

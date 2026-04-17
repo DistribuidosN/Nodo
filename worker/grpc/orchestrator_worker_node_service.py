@@ -7,7 +7,7 @@ import psutil
 
 from proto import orchestrator_pb2, orchestrator_pb2_grpc
 from worker.core.node import WorkerNode
-from worker.models.types import Task, TransformationSpec
+from worker.domain.models import Task, TransformationSpec
 from worker.telemetry.metrics import WorkerMetrics
 
 # Sincronización con orchestrator.proto

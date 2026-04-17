@@ -4,7 +4,7 @@ import base64
 from datetime import UTC, datetime
 from typing import Any
 
-from worker.models.types import (
+from worker.domain.models import (
     ExecutionResultRecord,
     InputImageRef,
     OperationType,

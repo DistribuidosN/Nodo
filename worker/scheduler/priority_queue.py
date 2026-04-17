@@ -6,7 +6,7 @@ import itertools
 import time
 from collections import Counter
 
-from worker.models.types import PriorityQueueItem, Task
+from worker.domain.models import PriorityQueueItem, Task
 from worker.scheduler.scoring import TaskScorer
 
 

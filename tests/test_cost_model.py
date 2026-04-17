@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from worker.models.types import InputImageRef, OperationType, Task, TransformationSpec
+from worker.domain.models import InputImageRef, OperationType, Task, TransformationSpec
 from worker.scheduler.cost_model import (
     FILTER_QUEUE_COST_HINTS,
     FORMAT_CONVERSION_QUEUE_COST_HINTS,

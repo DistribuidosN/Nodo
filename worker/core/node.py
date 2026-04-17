@@ -10,11 +10,11 @@ from typing import TypedDict
 
 from worker.config import WorkerConfig
 from worker.core.state_store import PendingTaskStore, StateStore
-from worker.core.storage import StorageClient
+from worker.application.ports.storage import StoragePort
 from worker.execution.execution_manager import ExecutionManager
 from worker.execution.resource_manager import ResourceManager
-from worker.grpc.reporter import CoordinatorReporter
-from worker.models.types import (
+# Eliminamos la importación de CoordinatorReporter para desacoplar gRPC
+from worker.domain.models import (
     ExecutionResultRecord,
     HealthState,
     NodeHealth,
@@ -63,10 +63,22 @@ class ControlReply(TypedDict):
     message: str
 
 
+from worker.application.ports.image_processor import ImageProcessorPort
+
 class WorkerNode:
-    def __init__(self, config: WorkerConfig, metrics: WorkerMetrics) -> None:
+    def __init__(
+        self, 
+        config: WorkerConfig, 
+        metrics: WorkerMetrics,
+        storage: StoragePort,
+        processor: ImageProcessorPort,
+        communication_service: Any = None
+    ) -> None:
         self._config = config
         self._metrics = metrics
+        self._storage = storage
+        self._processor = processor
+        self._communication = communication_service
         self._logger = logging.getLogger("worker.node")
         self._started_at = datetime.now(tz=UTC)
         self._scorer = TaskScorer(config)
@@ -88,7 +100,7 @@ class WorkerNode:
         self._steals_performed = 0
         self._last_steal_at_monotonic = 0.0
         self._task_lock = asyncio.Lock()
-        self._storage = StorageClient.from_config(config)
+        
         self._state_root_uri = str(config.state_dir)
         self._state_store = StateStore(self._storage, self._state_root_uri)
         self._pending_store = PendingTaskStore(self._storage, self._state_root_uri)
@@ -103,16 +115,7 @@ class WorkerNode:
             active_tasks=0,
             message="worker booting",
         )
-        # Reporter: Maneja la comunicación gRPC con el Orquestador Java (Pull/Submit/Heartbeat)
-        self._reporter = CoordinatorReporter(
-            config=config,
-            metrics=metrics,
-            status_provider=self.get_node_state,
-            storage=self._storage,
-            state_root_uri=self._state_root_uri,
-            submit_task=self.submit_task,
-            stats_provider=self.orchestrator_stats,
-        )
+        # El reportero ahora es inyectado mediante el servicio de comunicación
         self._execution_manager = ExecutionManager(
             config=config,
             metrics=metrics,
@@ -122,6 +125,7 @@ class WorkerNode:
             handle_failure=self._handle_failure,
             release_resources=self._resource_manager.release,
             storage=self._storage,
+            processor=self._processor,
         )
 
     async def start(self) -> None:
@@ -135,7 +139,10 @@ class WorkerNode:
         # El servidor de métricas y health HTTP han sido eliminados por simplificación.
         # Las métricas se siguen recolectando internamente para orchestrator.proto.
         
-        await self._reporter.start()
+        # El servicio de comunicación se inicia desde fuera o mediante inyección
+        if self._communication:
+            await self._communication.start()
+        
         # Bucle principal de planificación de tareas
         self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="worker-scheduler")
         # Bucle de actualización de salud interna
@@ -388,7 +395,8 @@ class WorkerNode:
             self._pending_store.remove(task.task_id)
 
     async def _emit_progress(self, event: ProgressEventRecord) -> None:
-        await self._reporter.report_progress(event)
+        if self._communication:
+            await self._communication.report_progress(event)
 
     async def _handle_result(
         self,
@@ -428,7 +436,8 @@ class WorkerNode:
                 metadata=self._trace_metadata(task),
             )
         )
-        await self._reporter.report_result(result)
+        if self._communication:
+            await self._communication.report_result(result)
         self._resolve_result_waiters(task.task_id, result)
 
     async def _handle_failure(self, task: Task, error_code: str, error_message: str) -> None:
@@ -496,7 +505,8 @@ class WorkerNode:
                 metadata=self._trace_metadata(task),
             )
         )
-        await self._reporter.report_result(result)
+        if self._communication:
+            await self._communication.report_result(result)
         self._resolve_result_waiters(task.task_id, result)
 
     def _cleanup_completed_cache(self) -> None:
@@ -520,29 +530,27 @@ class WorkerNode:
 
     def _update_health_from_state(self, state: NodeState) -> None:
         live = True
-        coordinator_ok = (not self._reporter.enabled) or self._reporter.connected
+        # Ahora la salud de la comunicación es opcional o se asume OK si no hay servicio
+        coordinator_ok = True 
         ready = (
             state.mode == NodeMode.ACTIVE
             and state.accepting_tasks
             and state.queue_length < self._config.queue_high_watermark
             and state.available_memory_bytes > self._config.min_free_memory_bytes
-            and coordinator_ok
         )
         if ready:
             health_state = HealthState.READY
             message = "worker ready"
-        elif live and coordinator_ok:
-            health_state = HealthState.DEGRADED
-            message = "worker live but not ready for new load"
         else:
             health_state = HealthState.NOT_READY
-            message = "worker cannot safely accept new load"
+            message = "worker not ready"
+            
         self._latest_health = NodeHealth(
             node_id=state.node_id,
             state=health_state,
             live=live,
             ready=ready,
-            coordinator_connected=self._reporter.connected,
+            coordinator_connected=coordinator_ok,
             queue_length=state.queue_length,
             active_tasks=state.active_tasks,
             message=message,

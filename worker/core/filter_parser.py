@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from worker.models.types import OperationType, TransformationSpec
+from worker.domain.models import OperationType, TransformationSpec
 
 # Parser de Filtros y Transformaciones
 # Convierte cadenas de texto (DSL) enviadas por el orquestador en objetos

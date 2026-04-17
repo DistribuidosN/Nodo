@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from worker.core.storage import StorageClient
+from worker.infrastructure.adapters.storage.local_storage_adapter import LocalStorageAdapter
 from worker.core.state_store import StateStore
-from worker.models.types import ExecutionResultRecord, TaskState
+from worker.domain.models import ExecutionResultRecord, TaskState
 
 
 def test_state_store_persists_completed_results(tmp_path):
-    store = StateStore(tmp_path / "state")
+    storage = LocalStorageAdapter()
+    store = StateStore(storage, str(tmp_path / "state"))
     result = ExecutionResultRecord(
         task_id="task-1",
         image_id="image-1",
@@ -32,7 +33,7 @@ def test_state_store_persists_completed_results(tmp_path):
 
 
 def test_state_store_supports_file_uri_backend(tmp_path):
-    storage = StorageClient()
+    storage = LocalStorageAdapter()
     root_uri = (tmp_path / "shared-state").resolve().as_uri()
     store = StateStore(storage, root_uri)
     result = ExecutionResultRecord(
@@ -52,4 +53,5 @@ def test_state_store_supports_file_uri_backend(tmp_path):
     store.append_result(result, idempotency_key="idem-2")
 
     loaded = store.load_completed()
+    # En Windows, las URIs locales pueden ser algo distintas, pero el adaptador las normaliza
     assert loaded["idem-2"].output_path == "file:///tmp/out.png"

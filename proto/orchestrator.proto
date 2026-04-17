@@ -30,6 +30,7 @@ message ImageTask {
   int32 target_width = 7;    // (Opcional) Ancho a redimensionar
   int32 target_height = 8;   // (Opcional) Alto a redimensionar
   string image_format = 9;   // (Opcional) Formato de la imagen  
+  map<string, string> metadata = 10; // Metadatos de contexto opcionales
 }
 
 // Métricas en tiempo real de un nodo
@@ -75,6 +76,7 @@ message TaskResult {
   int64 finish_ts = 8;     // epoch-ms fin
   int32 processing_ms = 9; // Cuántos milisegundos le tomó a Python
   NodeMetrics metrics = 10; // snapshot justo después de terminar
+  map<string, string> metadata = 11; // Metadatos enriquecidos (OCR, Inferencia, etc.)
 }
 
 // ─── Work-Stealing ────────────────────────────────────────────────────────────

@@ -13,15 +13,10 @@ from typing import Awaitable, Callable, Literal, Union, cast
 from multiprocessing.process import BaseProcess
 
 from worker.config import WorkerConfig
-from worker.core.storage import StorageClient
-from worker.execution.image_processor import (
-    TaskCancelledError,
-    load_input_bytes,
-    persist_output_bytes,
-    process_image,
-    process_transform_stage,
-)
-from worker.models.types import (
+from worker.application.ports.storage import StoragePort
+from worker.application.ports.image_processor import ImageProcessorPort
+from worker.domain.exceptions import TaskCancelledError
+from worker.domain.models import (
     ExecutionResultRecord,
     ExecutorKind,
     ProgressEventRecord,
@@ -92,7 +87,8 @@ class ExecutionManager:
         handle_result: Callable[[Task, ExecutionResultRecord, int, int], Awaitable[None]],
         handle_failure: Callable[[Task, str, str], Awaitable[None]],
         release_resources: Callable[[str], Awaitable[None]],
-        storage: StorageClient | None = None,
+        storage: StoragePort,
+        processor: ImageProcessorPort,
     ) -> None:
         self._config = config
         self._metrics = metrics
@@ -101,7 +97,8 @@ class ExecutionManager:
         self._handle_result = handle_result
         self._handle_failure = handle_failure
         self._release_resources = release_resources
-        self._storage = storage or StorageClient()
+        self._storage = storage
+        self._processor = processor
         self._active: dict[str, RunningTask] = {}
         self._semaphore = asyncio.Semaphore(config.max_active_tasks)
         self._process_semaphore = asyncio.Semaphore(max(1, config.process_pool_workers))
@@ -165,7 +162,7 @@ class ExecutionManager:
                 ProgressEventRecord(
                     task_id=task.task_id,
                     image_id=task.input_image.image_id,
-                    node_id=task.metadata["node_id"],
+                    node_id=task.metadata.get("node_id", "unknown"),
                     state=TaskState.RUNNING,
                     progress_pct=15,
                     attempt=task.attempt,
@@ -255,13 +252,13 @@ class ExecutionManager:
 
     async def _run_dedicated_pipeline(self, task: Task) -> tuple[str, str, int, int, int, dict[str, str]]:
         """Ejecuta un pipeline de imágenes en procesos hijos etapa por etapa."""
-        payload, current_format = load_input_bytes(task, self._storage)
+        payload, current_format = self._processor.load_input_bytes(task)
         width, height = task.input_image.width, task.input_image.height
         metadata: dict[str, str] = {"processor": "pillow", "pipeline_mode": "stage_process"}
 
         if not task.transforms:
             output_format = (task.output_format or current_format or "png").lower()
-            output_path, size_bytes = persist_output_bytes(
+            output_path, size_bytes = self._processor.persist_output_bytes(
                 task.task_id, payload, output_format, str(self._config.output_dir)
             )
             return str(output_path), output_format, width, height, size_bytes, metadata
@@ -273,7 +270,16 @@ class ExecutionManager:
             result_queue: multiprocessing.Queue[ChildResult] = self._mp_context.Queue(maxsize=1)
             process: BaseProcess = self._mp_context.Process(
                 target=_process_entrypoint,
-                args=(task, payload, transform.operation.value, dict(transform.params), stage_format, result_queue),
+                args=(
+                    task, 
+                    payload, 
+                    transform.operation.value, 
+                    dict(transform.params), 
+                    stage_format, 
+                    result_queue,
+                    self._config.ocr_command,
+                    self._config.inference_command
+                ),
                 name=f"worker-stage-{index}"
             )
             process.start()
@@ -286,7 +292,7 @@ class ExecutionManager:
             payload, current_format, width, height, stage_metadata = await self._await_process_result(process, result_queue)
             metadata.update(stage_metadata)
 
-        output_path, size_bytes = persist_output_bytes(task.task_id, payload, current_format, str(self._config.output_dir))
+        output_path, size_bytes = self._processor.persist_output_bytes(task.task_id, payload, current_format, str(self._config.output_dir))
         return str(output_path), current_format, width, height, size_bytes, metadata
 
     async def _await_process_result(self, process: BaseProcess, result_queue: multiprocessing.Queue[ChildResult]) -> any:
@@ -398,6 +404,45 @@ def _handle_child_result(item: ChildResult) -> any:
     if status == "ok": return item[1]
     if status == "cancelled": raise TaskCancelledError(item[1])
     raise RuntimeError(f"{item[1]}: {item[2]}")
+
+
+def _process_entrypoint(
+    task: Task, 
+    payload: bytes, 
+    operation_value: str, 
+    params: dict[str, str], 
+    stage_output_format: str, 
+    result_queue: multiprocessing.Queue[ChildResult],
+    ocr_command: str | None = None,
+    inference_command: str | None = None
+) -> None:
+    """Entrypoint para procesos dedicados. Instancia un PillowAdapter local para evitar el GIL."""
+    from worker.infrastructure.adapters.image.pillow_adapter import PillowAdapter
+    from worker.infrastructure.adapters.storage.local_storage_adapter import LocalStorageAdapter
+    from worker.domain.models import OperationType
+    
+    try:
+        # En procesos hijos no tenemos el pool inyectado, instanciamos un adaptador local (Hexagonal)
+        storage = LocalStorageAdapter()
+        processor = PillowAdapter(
+            storage=storage,
+            ocr_command=ocr_command,
+            inference_command=inference_command
+        )
+        
+        operation = OperationType(operation_value)
+        result_payload, output_format, width, height, metadata = processor.process_transform_stage(
+            task, payload, operation, params, stage_output_format
+        )
+        result_queue.put(("ok", (result_payload, output_format, width, height, metadata)))
+    except TaskCancelledError as exc:
+        result_queue.put(("cancelled", str(exc)))
+    except Exception as exc:
+        import traceback
+        result_queue.put(("error", exc.__class__.__name__, traceback.format_exc()))
+    finally:
+        result_queue.close()
+
 
 ChildOk = tuple[Literal["ok"], tuple[bytes, str, int, int, dict[str, str]]]
 ChildCancelled = tuple[Literal["cancelled"], str]
