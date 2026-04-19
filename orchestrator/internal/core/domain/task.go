@@ -20,6 +20,7 @@ type TaskResult struct {
 	NodeID       string
 	WorkerID     string
 	Success      bool
+	ResultData   []byte
 	ErrorMsg     string
 	StartTs      int64
 	FinishTs     int64

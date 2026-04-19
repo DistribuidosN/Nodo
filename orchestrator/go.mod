@@ -8,4 +8,7 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
-require golang.org/x/text v0.33.0 // indirect
+require (
+	github.com/joho/godotenv v1.5.1 // indirect
+	golang.org/x/text v0.33.0 // indirect
+)

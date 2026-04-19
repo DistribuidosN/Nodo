@@ -20,7 +20,7 @@ type ConnectOrchestratorClient struct {
 
 func NewConnectOrchestratorClient(httpClient *http.Client, baseURL string, nodeID string) ports.OrchestratorClient {
 	return &ConnectOrchestratorClient{
-		client: protoconnect.NewOrchestratorClient(httpClient, baseURL),
+		client: protoconnect.NewOrchestratorClient(httpClient, baseURL, connect.WithGRPC()),
 		nodeID: nodeID,
 	}
 }
@@ -69,6 +69,7 @@ func (c *ConnectOrchestratorClient) SubmitResult(ctx context.Context, result *do
 		NodeId:       result.NodeID,
 		WorkerId:     result.WorkerID,
 		Success:      result.Success,
+		ResultData:   result.ResultData,
 		ErrorMsg:     result.ErrorMsg,
 		StartTs:      result.StartTs,
 		FinishTs:     result.FinishTs,

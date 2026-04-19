@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,13 +13,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
 	// Adaptadores
 	adaptergrpc "orchestrator-node/internal/adapters/grpc"
 	"orchestrator-node/internal/adapters/memory"
-	"orchestrator-node/internal/adapters/python"
 
 	// Servicios
 	"orchestrator-node/internal/core/services"
@@ -25,15 +28,56 @@ import (
 	"orchestrator-node/proto/protoconnect"
 )
 
-const (
-	javaOrchestratorURL = "http://localhost:50051" // Base URL de Java
-	localGrpcPort       = ":50052"
-	nodeID              = "go-agent-1" // Puedes leerlo de os.Getenv("NODE_ID")
-	localIP             = "127.0.0.1"
-	pythonScript        = "../worker/mi_script.py" // Ajustar ruta
-)
+// getLocalIP escanea las interfaces de red del PC para obtener la IP real en la red local.
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, address := range addrs {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				ip:= ipnet.IP.String()
+				fmt.Println("IP Local: ", ip)
+				return "127.0.0.1"
+			}
+		}
+	}
+	return "127.0.0.1"
+}
+
+// generateNodeID crea un identificador único aleatorio rápido (ej. go-agent-1f3a)
+func generateNodeID() string {
+	return fmt.Sprintf("go-agent-%d", time.Now().UnixNano()%100000)
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists && value != "" {
+		return value
+	}
+	return fallback
+}
 
 func main() {
+	// Cargar entorno desde .env si existe
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("Aviso: No se encontró archivo .env, usando variables del sistema o defaults.")
+	}
+
+	javaOrchestratorURL := getEnvOrDefault("JAVA_ORCHESTRATOR_URL", "http://localhost:9000")
+	localGrpcPort := getEnvOrDefault("LOCAL_GRPC_PORT", ":50051")
+	pythonScript := getEnvOrDefault("PYTHON_SCRIPT", "../worker/worker.py")
+	
+	nodeID := getEnvOrDefault("NODE_ID", generateNodeID())
+	localIP := getLocalIP()
+
+	log.Printf("======================================")
+	log.Printf(" Node ID        : %s", nodeID)
+	log.Printf(" IP Local       : %s", localIP)
+	log.Printf(" Puerto gRPC    : %s", localGrpcPort)
+	log.Printf(" Python Script  : %s", pythonScript)
+	log.Printf(" Server Java    : %s", javaOrchestratorURL)
+	log.Printf("======================================")
 	log.Println("Iniciando Go Node Agent (ConnectRPC + Supervisor)...")
 
 	// 1. Calcular Workers
@@ -51,10 +95,14 @@ func main() {
 	// 3. Inicializar Repositorio (Memoria)
 	metricsRepo := memory.NewInMemoryMetricsRepo(nodeID, localIP, numWorkers, numWorkers)
 
-	// 4. Configurar HTTP Client robusto para ConnectRPC (soporte H2C opcional / puro)
+	// 4. Configurar HTTP Client robusto para ConnectRPC (Forzar HTTP/2 en texto plano / H2C)
 	httpClient := &http.Client{
 		Transport: &http2.Transport{
 			AllowHTTP: true,
+			// Esta función engaña internamente al cliente para que la conexión HTTP/2 no exija certificados
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
 		},
 		Timeout: 30 * time.Second,
 	}
@@ -62,11 +110,8 @@ func main() {
 	// 5. Inicializar Conexión a Java Orquestador (Cliente ConnectRPC)
 	orchClient := adaptergrpc.NewConnectOrchestratorClient(httpClient, javaOrchestratorURL, nodeID)
 
-	// 6. Inicializar Executor (Python File I/O)
-	pyExecutor := python.NewCLIExecutor(pythonScript)
-
-	// 7. Instanciar Servicios (incluye Supervisor de Workers y Fetcher)
-	workerPoolSvc := services.NewWorkerPoolService(orchClient, pyExecutor, metricsRepo, numWorkers)
+	// 6. Instanciar Servicios (incluye Supervisor de Workers con IPC y Fetcher)
+	workerPoolSvc := services.NewWorkerPoolService(orchClient, pythonScript, metricsRepo, numWorkers)
 	heartbeatSvc := services.NewHeartbeatService(orchClient, metricsRepo, 5*time.Second)
 
 	// 8. Arrancar Cliente y Servicios (Background)

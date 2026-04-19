@@ -1,129 +1,114 @@
-# 🚀 Distributed Image Worker (Hexagonal Edition)
+# 🚀 Distributed Image Worker (Go + Python Persistent Pool)
 
-Worker inteligente en Python diseñado para el procesamiento paralelo de imágenes en sistemas distribuidos. Este nodo utiliza una **Arquitectura Hexagonal (Puertos y Adaptadores)** para garantizar modularidad, testabilidad y un desacoplamiento total de la infraestructura.
+Este nodo Worker utiliza una **Arquitectura Híbrida de Altísimo Rendimiento**, combinando la velocidad concurrente y de red robusta de **Go (Golang)** con la flexibilidad para el procesamiento de Visión por Computadora y Machine Learning de **Python**.
 
 ---
 
 ## 🏗️ Arquitectura del Sistema
 
-El Worker sigue los principios de **Clean Architecture**, dividiendo las responsabilidades en capas concéntricas:
+El sistema ha evolucionado de usar Python exclusivo, a utilizar **Go como un Orquestador Local** que administra un "Pool" de subprocesos persistentes de Python.
 
 ```mermaid
 graph TD
-    subgraph Infrastructure ["Capa de Infraestructura (Adaptadores)"]
-        GRPC_In["gRPC Inbound Servant"]
-        GRPC_Out["gRPC Coordinator Adapter"]
-        Storage["Local Storage Adapter"]
-        Engine["Pillow Processing Adapter"]
+    subgraph Servidor Java ["Quarkus Orquestador Principal"]
+        Java["Backend Central"]
     end
 
-    subgraph Application ["Capa de Aplicación (Servicios/Puertos)"]
-        Comm["Communication Service (Work-Stealing)"]
-        SP["Storage Port"]
-        IP["Image Processor Port"]
+    subgraph Go Agent ["Nodo Worker (Go)"]
+        WorkStealer["WorkStealing Poller (ConnectRPC HTTP/2)"]
+        Pool["Worker Pool Manager"]
+        IPC["JSON-RPC IPC Pipe (stdin/stdout)"]
     end
 
-    subgraph Core ["Capa de Dominio (Núcleo)"]
-        Node["Worker Node (Orquestador Local)"]
-        Exec["Execution Manager (Multiprocesamiento)"]
-        Models["Domain Models (Task, Result)"]
+    subgraph Python ["Capa de Procesamiento (Python 3.11)"]
+        Worker1["Subproceso Python 1 (Pesistente)"]
+        Worker2["Subproceso Python N (Pesistente)"]
+        Models[("Modelos de OCR e Inferencia Globales")]
     end
 
-    GRPC_In --> Node
-    Node --> Comm
-    Comm --> GRPC_Out
-    Node --> IP
-    IP --> Engine
-    Node --> SP
-    SP --> Storage
-    Node --> Exec
+    Java <==>|PULL Tareas (HTTP/2)| WorkStealer
+    WorkStealer --> Pool
+    Pool ==> IPC
+    IPC <==>|JSON| Worker1
+    IPC <==>|JSON| Worker2
+    Worker1 --> Models
 ```
 
----
-
-## 📂 Estructura de Carpetas
-
-```text
-Nodo/
-├── worker/                     # Código fuente raíz
-│   ├── application/            # Casos de uso y contratos (Puertos)
-│   │   ├── ports/              # Interfaces (IP, Storage, Coordinator)
-│   │   └── services/           # Lógica de comunicación (Work-Stealing)
-│   ├── domain/                 # Modelos de negocio puros y excepciones
-│   ├── infrastructure/         # Implementaciones concretas (Adaptadores)
-│   │   └── adapters/           # gRPC, Storage y Pillow (Engine)
-│   ├── core/                   # Núcleo del nodo y gestión de estado
-│   ├── grpc/                   # Adaptadores de entrada gRPC
-│   └── server.py               # Composition Root (Punto de entrada)
-├── proto/                      # Definiciones gRPC compartidas
-├── tests/                      # Suite de pruebas unitarias e integración
-└── data/                       # Almacenamiento local (Input, Output, State)
-```
+### 🧠 Modelo de Trabajo: Work-Stealing Rápido IPC
+1. **Go Agent** se conecta por gRPC directo vía HTTP/2 al Orquestador en Java y hace un "PULL", preguntando si hay tareas gráficas (según sus CPU disponibles).
+2. Go recibe y balancea las tareas hacia su local **Worker Pool**.
+3. El **Python Worker** es un hilo que nunca muere. Carga los pesados modelos de IA una sola vez, recibe las imágenes e intrucciones JSON vía `stdin`, hace su magia (*Tesseract, Centroides de Imagen*), devuelve la respuesta JSON vía `stdout` y se auto-resetea esperando la siguiente tarea a la velocidad de la luz.
 
 ---
 
-## ⚙️ Cómo Funciona el Sistema
+## 🛠️ Instalación y Requisitos
 
-### 🧠 Modelo de Trabajo: Work-Stealing (PULL)
-A diferencia de los sistemas tradicionales donde el servidor "empuja" tareas, este worker es **proactivo**:
-1. El `CommunicationService` solicita tareas al Orquestador Java cuando el nodo tiene capacidad libre.
-2. Si el Orquestador tiene trabajo, el worker lo "roba" (Stealing) y lo añade a su cola de prioridad local.
-3. El `ExecutionManager` procesa las imágenes en **procesos independientes** para evitar el Python GIL (Global Interpreter Lock), garantizando un uso real de los núcleos del CPU.
+### 1. Requisitos para Python (Lógica de Modelos)
+1. Instalar **Python 3.11+**.
+2. Instalar el ejecutable del motor **Tesseract OCR** en Windows desde el [Link Oficial](https://github.com/UB-Mannheim/tesseract/wiki).
+3. Instalar dependencias globales:
+   ```powershell
+   pip install Pillow pytesseract numpy
+   ```
 
-### 💾 Persistencia de Estado
-El nodo es **tolerante a fallos**. Guarda su estado (tareas pendientes y resultados no enviados) en `data/state/`. Si el worker se reinicia, cargará las tareas pendientes y las reanudará automáticamente.
+### 2. Requisitos para Go (Orquestación Local de Red)
+1. Descarga e instala Go desde su sitio oficial [golang.org/dl](https://golang.org/dl/).
+2. Comprueba tu instalación (requiere reiniciar PowerShell después de instalar):
+   ```powershell
+   go version
+   ```
 
 ---
 
-## 🚀 Ejecución del Proyecto
+## 🚀 Cómo Correr el Sistema
 
-### 1. Requisitos Previos
-- Python 3.11+
-- [Pillow](https://python-pillow.org/) para procesamiento de imágenes.
-- [gRPC](https://grpc.io/) para comunicación industrial.
-
-### 2. Ejecución Local (Python)
-Instala las dependencias y lanza el nodo:
+### Ejecución Directa (Desarrollo)
+Entra a la carpeta de Go y lánzalo nativamente. El orquestador Go activará automáticamente a los bots de Python por detrás:
 ```powershell
-# Instalar dependencias
-pip install -r requirements.txt
-
-# Ejecutar el worker
-python -m worker
+cd Nodo/orchestrator
+go run .\server\main.go
 ```
 
-### 3. Ejecución con Docker
-Ideal para despliegues escalables:
+---
+
+## 🏗️ Builds para Producción (Windows y Linux)
+
+Go permite empaquetar todo el servidor Go en un ejecutable ultra rápido (sin necesidad de instalar Go en la máquina que lo usará). 
+
+*Abre una terminal y dirígete a `Nodo/orchestrator/`.*
+
+### 🪟 1. Compilar para Windows (.exe)
 ```powershell
-# Levantar un nodo individual
-docker compose up -d --build
-
-# Levantar entorno de desarrollo (3 nodos)
-docker compose -f docker-compose-dev.yml up -d
+go build -o node_agent.exe .\server\main.go
 ```
-
----
-
-## 🛠️ Configuración (.env)
-
-El archivo `.env` controla el comportamiento del nodo sin cambiar el código:
-
-| Variable | Descripción | Default |
-| :--- | :--- | :--- |
-| `WORKER_NODE_ID` | Nombre único del nodo | hostname |
-| `WORKER_BIND_PORT` | Puerto gRPC del worker | 50051 |
-| `WORKER_COORDINATOR_TARGET` | Dirección del Orquestador Java | 127.0.0.1:50052 |
-| `WORKER_MAX_ACTIVE_TASKS` | Tareas paralelas máximas | CPU cores |
-| `WORKER_LOG_LEVEL` | Nivel de detalle (DEBUG, INFO) | INFO |
-
----
-
-## 🧪 Pruebas
-El proyecto incluye una suite de pruebas exhaustiva que valida la arquitectura:
+Para ejecutarlo, haz doble click o cópialo, y lánzalo:
 ```powershell
-python -m pytest tests/
+.\node_agent.exe
+```
+
+### 🐧 2. Compilar para Servidores Linux 
+Puedes compilar la versión de Linux sin necesidad de estar usando Linux. En tu misma consola PowerShell ajusta lo siguiente:
+```powershell
+$env:GOOS="linux"
+$env:GOARCH="amd64"
+go build -o node_agent_linux .\server\main.go
+```
+Para ejecutarlo en la VPS Linux, recuerda que la máquina destino solo necesita tener Python y Tesseract instalados; subes el ejecutable, le añades permisos y lo lanzas:
+```bash
+chmod +x node_agent_linux
+./node_agent_linux
 ```
 
 ---
-> [!TIP]
-> **Diseño Hexagonal**: Si deseas cambiar el motor de procesamiento (ej: de Pillow a OpenCV) o el almacenamiento (ej: de Local a S3), solo tienes que crear un nuevo **Adaptador** e inyectarlo en `server.py`. El núcleo del sistema permanecerá intacto.
+
+## ⚙️ Configuración del Entorno (.env)
+
+El archivo maestro de variables se ubica en `orchestrator/.env`:
+
+| Variable | Descripción |
+| :--- | :--- |
+| `JAVA_ORCHESTRATOR_URL` | La URL del servidor Quarkus en Java (ej: `http://localhost:9000`). |
+| `LOCAL_GRPC_PORT` | Puerto servidor Go para futuras implementaciones (ej: `:50051`). |
+| `PYTHON_SCRIPT` | Ruta en disco del worker (`../worker/worker.py`). |
+| `WORKER_TESSERACT_CMD` | Ruta absoluta binario OCR (ej: `C:\Program Files\Tesseract-OCR\tesseract.exe`). Si es errónea, el worker aplicará "Fallback" modo Simulacro. |
+| `NODE_ID` | Nombre opcional del Nodo. Si está vacío, se auto-genera aleatoriamente cada que enciendas el sistema. |
