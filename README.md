@@ -23,14 +23,14 @@ graph TD
     subgraph Python ["Capa de Procesamiento (Python 3.11)"]
         Worker1["Subproceso Python 1 (Pesistente)"]
         Worker2["Subproceso Python N (Pesistente)"]
-        Models[("Modelos de OCR e Inferencia Globales")]
+        Models[("Modelos de IA")]
     end
 
-    Java <==>|PULL Tareas (HTTP/2)| WorkStealer
+    Java <-->|PULL Tareas HTTP/2| WorkStealer
     WorkStealer --> Pool
     Pool ==> IPC
-    IPC <==>|JSON| Worker1
-    IPC <==>|JSON| Worker2
+    IPC <-->|JSON| Worker1
+    IPC <-->|JSON| Worker2
     Worker1 --> Models
 ```
 
