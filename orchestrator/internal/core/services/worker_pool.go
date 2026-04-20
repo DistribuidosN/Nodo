@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"orchestrator-node/internal/core/domain"
@@ -25,6 +26,7 @@ type WorkerPoolService struct {
 	metricsRepo ports.MetricsRepository
 	tasksChan   chan *domain.ImageTask
 	numWorkers  int32
+	activeTasks sync.Map
 }
 
 func NewWorkerPoolService(
@@ -87,6 +89,11 @@ func (s *WorkerPoolService) fetcherLoop(ctx context.Context) {
 
 			// Productor a la cola local
 			for _, t := range tasks {
+				// Optimización: No encolar si ya está siendo procesada (evita ruido en workers)
+				if _, active := s.activeTasks.Load(t.TaskID); active {
+					continue
+				}
+
 				select {
 				case <-ctx.Done():
 					return
@@ -125,6 +132,8 @@ func (s *WorkerPoolService) workerLoop(ctx context.Context, workerID string) {
 
 		// Arrancar el proceso de Python persistente
 		cmd := exec.CommandContext(ctx, "python", s.scriptPath)
+		cmd.Stderr = os.Stderr // Redirigir errores de Python al terminal de Go
+		
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
 			log.Fatalf("[%s] Error obteniendo STDIN de python: %v", workerID, err)
@@ -192,6 +201,14 @@ type pythonResponse struct {
 // processSingleTaskSafe envuelve una tarea en un Panic Recovery específico, gestiona I/O y reporte RPC.
 // Retorna 'true' si el conducto de comunicación (Python) sigue sano.
 func (s *WorkerPoolService) processSingleTaskSafe(ctx context.Context, workerID string, task *domain.ImageTask, stdin io.WriteCloser, scanner *bufio.Scanner, cmd *exec.Cmd) bool {
+	// 0. Deduplicación atómica: Evitar que dos workers procesen el mismo TaskID simultáneamente
+	if _, loaded := s.activeTasks.LoadOrStore(task.TaskID, true); loaded {
+		log.Printf("[%s] Tarea %s ignorada: Ya está siendo procesada por otro worker.", workerID, task.TaskID)
+		return true
+	}
+	// Liberar el TaskID del mapa cuando termine el proceso por completo (éxito o fallo)
+	defer s.activeTasks.Delete(task.TaskID)
+
 	startTime := time.Now()
 	var inputPath string
 
@@ -199,25 +216,39 @@ func (s *WorkerPoolService) processSingleTaskSafe(ctx context.Context, workerID 
 		if r := recover(); r != nil {
 			log.Printf("[%s] Task %s colapsó con PANIC: %v. Re-encolando para otro worker...", workerID, task.TaskID, r)
 			if inputPath != "" {
-				os.Remove(inputPath)
+				_ = os.Remove(inputPath)
 			}
 			go func() { s.tasksChan <- task }() // Auto-sanación: Devolver tarea a cola
-			cmd.Process.Kill() // Eliminar al zombie manchado
+			_ = cmd.Process.Kill() // Eliminar al zombie manchado
 		}
 	}()
 
 	// 1. I/O: Salvar los bits de red al FileSystem Temporal Local
-	tempDir := os.TempDir()
+	execPath, _ := os.Executable()
+	projectRoot := filepath.Join(filepath.Dir(execPath), "..", "..")
+
+	tempDir := filepath.Join(projectRoot, "temp")
+	_ = os.MkdirAll(tempDir, 0755)
+
 	ext := task.ImageFormat
 	if ext == "" {
 		ext = "png"
 	}
-	inputPath = filepath.Join(tempDir, fmt.Sprintf("in_%s.%s", task.TaskID, ext))
+
+	// 1.1 Nombre de archivo único por Worker y Task para evitar "File in use"
+	inputPath = filepath.Join(tempDir, fmt.Sprintf("worker_%s_in_%s.%s", workerID, task.TaskID, ext))
+	
+	// Limpieza garantizada del archivo de entrada al finalizar la tarea
+	defer func() {
+		if inputPath != "" {
+			_ = os.Remove(inputPath)
+		}
+	}()
+
 	if err := os.WriteFile(inputPath, task.ImageData, 0644); err != nil {
 		s.reportFail(workerID, task.TaskID, fmt.Sprintf("Error I/O guardando imagen: %v", err))
-		return true // Falló la tarea pero el Python sigue sano, no hace falta romper tubería
+		return true
 	}
-	defer os.Remove(inputPath)
 
 	// 2. Construir la Petición JSON-RPC
 	req := pythonRequest{
@@ -255,12 +286,20 @@ func (s *WorkerPoolService) processSingleTaskSafe(ctx context.Context, workerID 
 
 	jsonTask, _ := json.Marshal(req)
 
-	// 3. Escribir a Python via STDIN + Salto de línea
+	// 3. Comunicación IPC via STDIN con reintento corto o chequeo de salud
 	if _, err := fmt.Fprintln(stdin, string(jsonTask)); err != nil {
-		log.Printf("[%s] Excepción escribiendo STDIN de %s: %v", workerID, task.TaskID, err)
-		go func() { s.tasksChan <- task }()
-		cmd.Process.Kill()
-		return false // Tubería rota
+		log.Printf("[%s] ❌ Error crítico escribiendo en STDIN de Python (Task %s): %v", workerID, task.TaskID, err)
+		
+		// Si el pipe falló, devolvemos la tarea a la cola para otro worker
+		select {
+		case <-ctx.Done():
+			// No re-encolar si el servicio se está apagando
+		default:
+			go func() { s.tasksChan <- task }()
+		}
+		
+		_ = cmd.Process.Kill()
+		return false // Romper el loop para que workerLoop cree un proceso nuevo
 	}
 
 	// 4. Bloquear y leer respuesta de Python vía STDOUT

@@ -66,7 +66,7 @@ func main() {
 
 	javaOrchestratorURL := getEnvOrDefault("JAVA_ORCHESTRATOR_URL", "http://localhost:9000")
 	localGrpcPort := getEnvOrDefault("LOCAL_GRPC_PORT", ":50051")
-	pythonScript := getEnvOrDefault("PYTHON_SCRIPT", "../worker/worker.py")
+	pythonScript := getEnvOrDefault("PYTHON_SCRIPT", "../../worker/worker.py")
 	
 	nodeID := getEnvOrDefault("NODE_ID", generateNodeID())
 	localIP := getLocalIP()
