@@ -1,0 +1,55 @@
+# docker-compose.yml para el nodo A2WS
+# Levanta 6 réplicas del worker, cada una = 1 proceso Python independiente
+#
+# Uso:
+#   docker compose up --build
+#   docker compose up --build --scale worker=6   (si usas el perfil manual)
+#
+# Variables que puedes sobreescribir en un .env o en el bloque environment:
+#   ORCHESTRATOR_ADDR   host:puerto del servidor Java  (default: host.docker.internal:50051)
+#   LOG_LEVEL           INFO | DEBUG | WARNING          (default: INFO)
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: a2ws-worker:latest
+
+    # Docker asigna un NODE_ID único por réplica usando la variable de entorno
+    # HOSTNAME que Docker inyecta automáticamente (es el container ID corto)
+    environment:
+      ORCHESTRATOR_ADDR: ${ORCHESTRATOR_ADDR:-host.docker.internal:50051}
+      NODE_GRPC_PORT:    "50052"
+      PULL_INTERVAL_S:   "0.3"
+      HB_INTERVAL_S:     "4.0"
+      LOG_LEVEL:         ${LOG_LEVEL:-INFO}
+      # NODE_ID se toma del hostname del contenedor si no se define
+      # NODE_IP se detecta automáticamente via socket.gethostbyname
+
+    # Escala: 6 réplicas = 6 workers independientes
+    deploy:
+      replicas: 6
+      restart_policy:
+        condition: on-failure
+        delay: 3s
+        max_attempts: 5
+
+    # Puerto gRPC propio del nodo (el orquestador o ladrón lo contacta)
+    # Con múltiples réplicas, Docker asigna puertos del host automáticamente
+    ports:
+      - "50052"   # expuesto en puerto aleatorio del host por réplica
+
+    # Límites de recursos (ajusta según tu máquina)
+    # Un worker por contenedor, así que CPU y RAM son por worker
+    # resources:
+    #   limits:
+    #     cpus: "1.0"
+    #     memory: 512M
+
+    networks:
+      - a2ws_net
+
+networks:
+  a2ws_net:
+    driver: bridge
