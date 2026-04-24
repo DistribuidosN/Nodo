@@ -85,3 +85,11 @@ func (r *InMemoryMetricsRepo) RecordSteal(count int32) {
 	defer r.mu.Unlock()
 	r.metrics.StealsPerformed += count
 }
+
+func (r *InMemoryMetricsRepo) UpdateSystemMetrics(cpuPercent, ramUsedMB, ramTotalMB float32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.metrics.CPUPercent = cpuPercent
+	r.metrics.RAMUsedMB = ramUsedMB
+	r.metrics.RAMTotalMB = ramTotalMB
+}

@@ -23,22 +23,9 @@ func NewConnectWorkerServer(metricsRepo ports.MetricsRepository) *ConnectWorkerS
 }
 
 func (s *ConnectWorkerServer) GetMetrics(ctx context.Context, req *connect.Request[pb.QueueStatusRequest]) (*connect.Response[pb.NodeMetrics], error) {
-	log.Printf("[Connect-Server] Java Orquestador solicitó GetMetrics...")
 	m := s.metricsRepo.GetMetrics()
-
-	res := connect.NewResponse(&pb.NodeMetrics{
-		NodeId:        m.NodeID,
-		IpAddress:     m.IPAddress,
-		RamUsedMb:     m.RAMUsedMB,
-		CpuPercent:    m.CPUPercent,
-		WorkersBusy:   m.WorkersBusy,
-		WorkersTotal:  m.WorkersTotal,
-		QueueSize:     m.QueueSize,
-		QueueCapacity: m.QueueCapacity,
-		TasksDone:     m.TasksDone,
-		UptimeSeconds: m.UptimeSeconds,
-		Status:        m.Status,
-	})
+	log.Printf("[Connect-Server] Java Orquestador solicitó GetMetrics — Envíando CPU: %.1f%%, RAM: %.1f MB", m.CPUPercent, m.RAMUsedMB)
+	res := connect.NewResponse(mapDomainToPbMetrics(m))
 	return res, nil
 }
 

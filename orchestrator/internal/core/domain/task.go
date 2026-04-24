@@ -1,11 +1,17 @@
 package domain
 
+type TransformationItem struct {
+	Type       string
+	ParamsJSON string // JSON string con los parámetros (ej: {"angle": 90})
+}
+
 // ImageTask representa una tarea independiente de infraestructura (Protobuf).
 type ImageTask struct {
 	TaskID       string
 	ImageData    []byte // Buffer de bytes cargado en memoria temporalmente
 	Filename     string
-	FilterType   string
+	FilterType   string // Antiguo: nombres separados por coma
+	Pipeline     []TransformationItem // Nuevo: objetos con parámetros
 	Priority     int32
 	TargetWidth  int32
 	TargetHeight int32

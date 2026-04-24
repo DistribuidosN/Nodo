@@ -45,6 +45,11 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// OrchestratorRegisterNodeProcedure is the fully-qualified name of the Orchestrator's RegisterNode
+	// RPC.
+	OrchestratorRegisterNodeProcedure = "/worker.Orchestrator/RegisterNode"
+	// OrchestratorLogEventProcedure is the fully-qualified name of the Orchestrator's LogEvent RPC.
+	OrchestratorLogEventProcedure = "/worker.Orchestrator/LogEvent"
 	// OrchestratorPullTasksProcedure is the fully-qualified name of the Orchestrator's PullTasks RPC.
 	OrchestratorPullTasksProcedure = "/worker.Orchestrator/PullTasks"
 	// OrchestratorSubmitResultProcedure is the fully-qualified name of the Orchestrator's SubmitResult
@@ -71,6 +76,12 @@ const (
 
 // OrchestratorClient is a client for the worker.Orchestrator service.
 type OrchestratorClient interface {
+	// Autodescubrimiento: el nodo se registra al arrancar.
+	// Si ya existía → UPDATED; si es nuevo → REGISTERED.
+	// Usar también como heartbeat de registro con métricas iniciales.
+	RegisterNode(context.Context, *connect.Request[proto.RegisterNodeRequest]) (*connect.Response[proto.RegisterNodeResponse], error)
+	// Centralización de logs de los nodos
+	LogEvent(context.Context, *connect.Request[proto.LogRequest]) (*connect.Response[proto.LogResponse], error)
 	// A2WS PULL: el nodo pide trabajo cuando tiene slots libres
 	PullTasks(context.Context, *connect.Request[proto.PullRequest]) (*connect.Response[proto.PullResponse], error)
 	// El nodo entrega el resultado de una imagen procesada
@@ -79,7 +90,8 @@ type OrchestratorClient interface {
 	StealTasks(context.Context, *connect.Request[proto.StealRequest]) (*connect.Response[proto.StealResponse], error)
 	// El nodo reporta progreso de una tarea en curso (UI en tiempo real)
 	UpdateTaskProgress(context.Context, *connect.Request[proto.TaskProgress]) (*connect.Response[proto.Ack], error)
-	// Heartbeat: "sigo vivo"; si falla 3 veces → re-encolar sus tareas
+	// Heartbeat ligero: "sigo vivo" + métricas en tiempo real.
+	// Si falla 3 veces consecutivas → el servidor re-encola sus tareas.
 	SendHeartbeat(context.Context, *connect.Request[proto.HeartbeatRequest]) (*connect.Response[proto.Ack], error)
 	// Estado completo de colas (para dashboard / decisiones A2WS)
 	GetQueueStatus(context.Context, *connect.Request[proto.QueueStatusRequest]) (*connect.Response[proto.QueueStatusResponse], error)
@@ -98,6 +110,18 @@ func NewOrchestratorClient(httpClient connect.HTTPClient, baseURL string, opts .
 	baseURL = strings.TrimRight(baseURL, "/")
 	orchestratorMethods := proto.File_orchestrator_proto.Services().ByName("Orchestrator").Methods()
 	return &orchestratorClient{
+		registerNode: connect.NewClient[proto.RegisterNodeRequest, proto.RegisterNodeResponse](
+			httpClient,
+			baseURL+OrchestratorRegisterNodeProcedure,
+			connect.WithSchema(orchestratorMethods.ByName("RegisterNode")),
+			connect.WithClientOptions(opts...),
+		),
+		logEvent: connect.NewClient[proto.LogRequest, proto.LogResponse](
+			httpClient,
+			baseURL+OrchestratorLogEventProcedure,
+			connect.WithSchema(orchestratorMethods.ByName("LogEvent")),
+			connect.WithClientOptions(opts...),
+		),
 		pullTasks: connect.NewClient[proto.PullRequest, proto.PullResponse](
 			httpClient,
 			baseURL+OrchestratorPullTasksProcedure,
@@ -145,6 +169,8 @@ func NewOrchestratorClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // orchestratorClient implements OrchestratorClient.
 type orchestratorClient struct {
+	registerNode       *connect.Client[proto.RegisterNodeRequest, proto.RegisterNodeResponse]
+	logEvent           *connect.Client[proto.LogRequest, proto.LogResponse]
 	pullTasks          *connect.Client[proto.PullRequest, proto.PullResponse]
 	submitResult       *connect.Client[proto.TaskResult, proto.Ack]
 	stealTasks         *connect.Client[proto.StealRequest, proto.StealResponse]
@@ -152,6 +178,16 @@ type orchestratorClient struct {
 	sendHeartbeat      *connect.Client[proto.HeartbeatRequest, proto.Ack]
 	getQueueStatus     *connect.Client[proto.QueueStatusRequest, proto.QueueStatusResponse]
 	watchQueue         *connect.Client[proto.QueueStatusRequest, proto.QueueStatusResponse]
+}
+
+// RegisterNode calls worker.Orchestrator.RegisterNode.
+func (c *orchestratorClient) RegisterNode(ctx context.Context, req *connect.Request[proto.RegisterNodeRequest]) (*connect.Response[proto.RegisterNodeResponse], error) {
+	return c.registerNode.CallUnary(ctx, req)
+}
+
+// LogEvent calls worker.Orchestrator.LogEvent.
+func (c *orchestratorClient) LogEvent(ctx context.Context, req *connect.Request[proto.LogRequest]) (*connect.Response[proto.LogResponse], error) {
+	return c.logEvent.CallUnary(ctx, req)
 }
 
 // PullTasks calls worker.Orchestrator.PullTasks.
@@ -191,6 +227,12 @@ func (c *orchestratorClient) WatchQueue(ctx context.Context, req *connect.Reques
 
 // OrchestratorHandler is an implementation of the worker.Orchestrator service.
 type OrchestratorHandler interface {
+	// Autodescubrimiento: el nodo se registra al arrancar.
+	// Si ya existía → UPDATED; si es nuevo → REGISTERED.
+	// Usar también como heartbeat de registro con métricas iniciales.
+	RegisterNode(context.Context, *connect.Request[proto.RegisterNodeRequest]) (*connect.Response[proto.RegisterNodeResponse], error)
+	// Centralización de logs de los nodos
+	LogEvent(context.Context, *connect.Request[proto.LogRequest]) (*connect.Response[proto.LogResponse], error)
 	// A2WS PULL: el nodo pide trabajo cuando tiene slots libres
 	PullTasks(context.Context, *connect.Request[proto.PullRequest]) (*connect.Response[proto.PullResponse], error)
 	// El nodo entrega el resultado de una imagen procesada
@@ -199,7 +241,8 @@ type OrchestratorHandler interface {
 	StealTasks(context.Context, *connect.Request[proto.StealRequest]) (*connect.Response[proto.StealResponse], error)
 	// El nodo reporta progreso de una tarea en curso (UI en tiempo real)
 	UpdateTaskProgress(context.Context, *connect.Request[proto.TaskProgress]) (*connect.Response[proto.Ack], error)
-	// Heartbeat: "sigo vivo"; si falla 3 veces → re-encolar sus tareas
+	// Heartbeat ligero: "sigo vivo" + métricas en tiempo real.
+	// Si falla 3 veces consecutivas → el servidor re-encola sus tareas.
 	SendHeartbeat(context.Context, *connect.Request[proto.HeartbeatRequest]) (*connect.Response[proto.Ack], error)
 	// Estado completo de colas (para dashboard / decisiones A2WS)
 	GetQueueStatus(context.Context, *connect.Request[proto.QueueStatusRequest]) (*connect.Response[proto.QueueStatusResponse], error)
@@ -214,6 +257,18 @@ type OrchestratorHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewOrchestratorHandler(svc OrchestratorHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	orchestratorMethods := proto.File_orchestrator_proto.Services().ByName("Orchestrator").Methods()
+	orchestratorRegisterNodeHandler := connect.NewUnaryHandler(
+		OrchestratorRegisterNodeProcedure,
+		svc.RegisterNode,
+		connect.WithSchema(orchestratorMethods.ByName("RegisterNode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orchestratorLogEventHandler := connect.NewUnaryHandler(
+		OrchestratorLogEventProcedure,
+		svc.LogEvent,
+		connect.WithSchema(orchestratorMethods.ByName("LogEvent")),
+		connect.WithHandlerOptions(opts...),
+	)
 	orchestratorPullTasksHandler := connect.NewUnaryHandler(
 		OrchestratorPullTasksProcedure,
 		svc.PullTasks,
@@ -258,6 +313,10 @@ func NewOrchestratorHandler(svc OrchestratorHandler, opts ...connect.HandlerOpti
 	)
 	return "/worker.Orchestrator/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case OrchestratorRegisterNodeProcedure:
+			orchestratorRegisterNodeHandler.ServeHTTP(w, r)
+		case OrchestratorLogEventProcedure:
+			orchestratorLogEventHandler.ServeHTTP(w, r)
 		case OrchestratorPullTasksProcedure:
 			orchestratorPullTasksHandler.ServeHTTP(w, r)
 		case OrchestratorSubmitResultProcedure:
@@ -280,6 +339,14 @@ func NewOrchestratorHandler(svc OrchestratorHandler, opts ...connect.HandlerOpti
 
 // UnimplementedOrchestratorHandler returns CodeUnimplemented from all methods.
 type UnimplementedOrchestratorHandler struct{}
+
+func (UnimplementedOrchestratorHandler) RegisterNode(context.Context, *connect.Request[proto.RegisterNodeRequest]) (*connect.Response[proto.RegisterNodeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("worker.Orchestrator.RegisterNode is not implemented"))
+}
+
+func (UnimplementedOrchestratorHandler) LogEvent(context.Context, *connect.Request[proto.LogRequest]) (*connect.Response[proto.LogResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("worker.Orchestrator.LogEvent is not implemented"))
+}
 
 func (UnimplementedOrchestratorHandler) PullTasks(context.Context, *connect.Request[proto.PullRequest]) (*connect.Response[proto.PullResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("worker.Orchestrator.PullTasks is not implemented"))

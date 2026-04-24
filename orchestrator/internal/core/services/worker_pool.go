@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,7 +74,7 @@ func (s *WorkerPoolService) fetcherLoop(ctx context.Context) {
 				continue
 			}
 
-			tasks, err := s.client.PullTasks(ctx, slotsFree)
+			tasks, err := s.client.PullTasks(ctx, slotsFree, s.metricsRepo.GetMetrics())
 			if err != nil {
 				log.Printf("[Fetcher] Error pidiendo tareas: %v", err)
 				time.Sleep(2 * time.Second)
@@ -214,7 +213,12 @@ func (s *WorkerPoolService) processSingleTaskSafe(ctx context.Context, workerID 
 
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[%s] Task %s colapsó con PANIC: %v. Re-encolando para otro worker...", workerID, task.TaskID, r)
+			msg := fmt.Sprintf("PANIC RECOVERY: %v", r)
+			log.Printf("[%s] Task %s colapsó: %s", workerID, task.TaskID, msg)
+			
+			// Loggear pánico como CRITICAL al orquestador
+			s.client.LogEvent("CRITICAL", msg, task.TaskID, 0)
+
 			if inputPath != "" {
 				_ = os.Remove(inputPath)
 			}
@@ -258,33 +262,77 @@ func (s *WorkerPoolService) processSingleTaskSafe(ctx context.Context, workerID 
 		OutputFormat: ext,
 		Transforms:   make([]map[string]interface{}, 0),
 	}
-	
-	cleanFilters := strings.Trim(task.FilterType, "[]")
-	operations := strings.Split(cleanFilters, ",")
 
-	for _, op := range operations {
-		opClean := strings.TrimSpace(op)
-		if opClean == "" {
-			continue
+	// 2.1 Llenar transformaciones prioritarias del Pipeline (con parámetros)
+	if len(task.Pipeline) > 0 {
+		log.Printf("[%s] 🛠️ Usando Pipeline dinámico con %d transformaciones para Task %s", workerID, len(task.Pipeline), task.TaskID)
+		for i, item := range task.Pipeline {
+			params := make(map[string]interface{})
+			
+			// 1. Extraer nombre de operación y posibles parámetros del campo Type (por si viene serializado)
+			opName := strings.TrimSpace(item.Type)
+			if strings.HasPrefix(opName, "{") {
+				var inner map[string]interface{}
+				if err := json.Unmarshal([]byte(opName), &inner); err == nil {
+					if name, ok := inner["name"].(string); ok {
+						opName = name
+					}
+					// Si el JSON interno trae params, los cargamos primero
+					if pRaw, ok := inner["params"]; ok {
+						if pStr, ok := pRaw.(string); ok && pStr != "" && pStr != "{}" {
+							_ = json.Unmarshal([]byte(pStr), &params)
+						} else if pMap, ok := pRaw.(map[string]interface{}); ok {
+							params = pMap
+						}
+					}
+				}
+			}
+
+			// 2. Cargar parámetros del campo específico ParamsJSON (sobrescribe o añade)
+			if item.ParamsJSON != "" && item.ParamsJSON != "{}" {
+				if err := json.Unmarshal([]byte(item.ParamsJSON), &params); err != nil {
+					log.Printf("[%s] ⚠️ Error unmarshaling params for %s: %v", workerID, opName, err)
+				}
+			}
+
+			// NOTA: transformation_id es el índice i+1 para trazabilidad
+			s.client.LogEvent("INFO", fmt.Sprintf("Iniciando transformación %d: %s", i+1, opName), task.TaskID, int32(i+1))
+
+			if _, ok := params["width"]; !ok && task.TargetWidth > 0 {
+				params["width"] = task.TargetWidth
+			}
+			if _, ok := params["height"]; !ok && task.TargetHeight > 0 {
+				params["height"] = task.TargetHeight
+			}
+
+			req.Transforms = append(req.Transforms, map[string]interface{}{
+				"operation": strings.ToLower(opName),
+				"params":    params,
+			})
 		}
-		
-		transform := map[string]interface{}{
-			"operation": opClean,
-			"params":    make(map[string]interface{}),
+	} else {
+		// FALLBACK legacy
+		log.Printf("[%s] ⚠️ Pipeline vacío para Task %s, usando FilterType legacy: %s", workerID, task.TaskID, task.FilterType)
+		s.client.LogEvent("WARNING", "Usando FilterType legacy (pipeline vacío)", task.TaskID, 0)
+		cleanFilters := strings.Trim(task.FilterType, "[]")
+		operations := strings.Split(cleanFilters, ",")
+		for _, op := range operations {
+			opClean := strings.TrimSpace(op)
+			if opClean == "" {
+				continue
+			}
+			req.Transforms = append(req.Transforms, map[string]interface{}{
+				"operation": strings.ToLower(opClean),
+				"params": map[string]interface{}{
+					"width":  task.TargetWidth,
+					"height": task.TargetHeight,
+				},
+			})
 		}
-		params := transform["params"].(map[string]interface{})
-		
-		// Inyectamos width y height comunes (operaciones como 'resize' las usarán)
-		if task.TargetWidth > 0 {
-			params["width"] = strconv.Itoa(int(task.TargetWidth))
-		}
-		if task.TargetHeight > 0 {
-			params["height"] = strconv.Itoa(int(task.TargetHeight))
-		}
-		req.Transforms = append(req.Transforms, transform)
 	}
 
 	jsonTask, _ := json.Marshal(req)
+	log.Printf("[%s] 🚀 Enviando a Python: %s", workerID, string(jsonTask))
 
 	// 3. Comunicación IPC via STDIN con reintento corto o chequeo de salud
 	if _, err := fmt.Fprintln(stdin, string(jsonTask)); err != nil {
@@ -332,6 +380,7 @@ func (s *WorkerPoolService) processSingleTaskSafe(ctx context.Context, workerID 
 		StartTs:      startTime.UnixMilli(),
 		FinishTs:     time.Now().UnixMilli(),
 		ProcessingMs: int32(time.Since(startTime).Milliseconds()),
+		Metrics:      s.metricsRepo.GetMetrics(),
 	}
 
 	if resp.Success {

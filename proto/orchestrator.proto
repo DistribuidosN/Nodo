@@ -20,12 +20,21 @@ option go_package = "orchestrator-node/proto";
 //  MENSAJES COMUNES
 // ═══════════════════════════════════════════════════════════════════════════
 
+message TransformationItem {
+  string type = 1;
+  string params_json = 2;
+}
+
+message TransformationPipeline {
+  repeated TransformationItem items = 1;
+}
+
 // Tarea de imagen publicada por el orquestador
 message ImageTask {
   string task_id = 1;
   bytes image_data = 2;      // <-- ¡AQUÍ VIAJAN LOS BITS! (Adiós Base64)
   string filename = 3;       // Ej: "reloj.png"
-  string filter_type = 4;    // Ej: "blur", "ocr", "grayscale"
+  TransformationPipeline transformation_pipeline = 4;
   int64 enqueue_ts = 5;      // Tiempo en el que entró a la cola
   int32 priority = 6;        // Prioridad (0 por defecto)
   int32 target_width = 7;    // (Opcional) Ancho a redimensionar
@@ -122,6 +131,22 @@ message QueueStatusResponse {
   int64 timestamp = 4;   // epoch-ms de la snapshot
 }
 
+// ─── Registro de nodo (autodescubrimiento) ───────────────────────────────────
+message RegisterNodeRequest {
+  string node_id = 1;      // Identificador único del nodo (ej. "nodo-go-1")
+  string ip_address = 2;   // IP real del nodo en la red
+  int32  port = 3;         // Puerto gRPC en el que el nodo expone su servicio
+  NodeMetrics metrics = 4; // Snapshot inicial de métricas (workers, cola, etc.)
+}
+
+message RegisterNodeResponse {
+  bool   ok = 1;
+  // "REGISTERED" = nodo nuevo registrado correctamente
+  // "UPDATED"    = nodo ya existía, solo se actualizó su estado
+  string status = 2;
+  string msg = 3;  // Mensaje descriptivo opcional del servidor
+}
+
 // ─── Heartbeat ────────────────────────────────────────────────────────────────
 message HeartbeatRequest {
   string node_id = 1;
@@ -130,6 +155,18 @@ message HeartbeatRequest {
 }
 
 // ─── Ack genérico ─────────────────────────────────────────────────────────────
+message LogRequest {
+  string node_id = 1;
+  string image_uuid = 2; 
+  string level = 3;      // INFO, WARNING, ERROR, CRITICAL
+  string message = 4;
+  int32  transformation_id = 5; 
+}
+
+message LogResponse {
+  bool ok = 1;
+}
+
 message Ack {
   bool ok = 1;
   string msg = 2;
@@ -141,6 +178,14 @@ message Ack {
 
 // ── Expuesto por el Servidor Java (Orquestador) ───────────────────────────────
 service Orchestrator {
+
+  // Autodescubrimiento: el nodo se registra al arrancar.
+  // Si ya existía → UPDATED; si es nuevo → REGISTERED.
+  // Usar también como heartbeat de registro con métricas iniciales.
+  rpc RegisterNode (RegisterNodeRequest) returns (RegisterNodeResponse);
+
+  // Centralización de logs de los nodos
+  rpc LogEvent (LogRequest) returns (LogResponse);
 
   // A2WS PULL: el nodo pide trabajo cuando tiene slots libres
   rpc PullTasks (PullRequest) returns (PullResponse);
@@ -154,7 +199,8 @@ service Orchestrator {
   // El nodo reporta progreso de una tarea en curso (UI en tiempo real)
   rpc UpdateTaskProgress (TaskProgress) returns (Ack);
 
-  // Heartbeat: "sigo vivo"; si falla 3 veces → re-encolar sus tareas
+  // Heartbeat ligero: "sigo vivo" + métricas en tiempo real.
+  // Si falla 3 veces consecutivas → el servidor re-encola sus tareas.
   rpc SendHeartbeat (HeartbeatRequest) returns (Ack);
 
   // Estado completo de colas (para dashboard / decisiones A2WS)

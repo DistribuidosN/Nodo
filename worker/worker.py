@@ -92,6 +92,7 @@ class ImageWorker:
         for transform in transforms:
             operation = transform.get("operation", "").lower()
             params = transform.get("params", {})
+            print(f"[Python-Worker] Aplicando {operation} a la tarea {task_id}", file=sys.stderr)
             image, step_metadata = self._apply_transform(image, operation, params)
             if step_metadata:
                 metadata.update(step_metadata)
@@ -120,24 +121,82 @@ class ImageWorker:
     def _apply_transform(self, image: Image.Image, operation: str, params: dict) -> tuple[Image.Image, dict]:
         """Aplica la transformación específica usando Pillow y motores internos."""
         metadata = {}
-        if operation == "grayscale":
-            image = ImageOps.grayscale(image)
+        op = operation.lower()
+
+        if op == "grayscale":
+            intensity = float(params.get("intensity", 1.0))
+            gray = ImageOps.grayscale(image).convert("RGB")
+            if intensity < 1.0:
+                image = Image.blend(image, gray, intensity)
+            else:
+                image = gray
             
-        elif operation == "resize":
-            target_width = int(params["width"])
-            target_height = int(params["height"])
-            image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        elif op == "resize":
+            width, height = image.size
+            tw = params.get("width")
+            th = params.get("height")
+            scale = params.get("scale")
+
+            if scale:
+                s = float(scale)
+                nw, nh = int(width * s), int(height * s)
+            else:
+                nw = int(tw) if tw else width
+                nh = int(th) if th else height
             
-        elif operation == "crop":
+            image = image.resize((nw, nh), Image.Resampling.LANCZOS)
+            
+        elif op == "pixelate":
+            # Efecto de censura o estilo retro
+            block_size = int(params.get("block_size", 10))
+            if block_size > 1:
+                orig_size = image.size
+                small = image.resize((orig_size[0] // block_size, orig_size[1] // block_size), Image.Resampling.NEAREST)
+                image = small.resize(orig_size, Image.Resampling.NEAREST)
+
+        elif op == "sepia":
+            intensity = float(params.get("intensity", 1.0))
+            # Matriz de transformación sepia estándar
+            def make_sepia(img):
+                width, height = img.size
+                pixels = img.load()
+                for py in range(height):
+                    for px in range(width):
+                        r, g, b = pixels[px, py]
+                        tr = int(0.393 * r + 0.769 * g + 0.189 * b)
+                        tg = int(0.349 * r + 0.686 * g + 0.168 * b)
+                        tb = int(0.272 * r + 0.534 * g + 0.131 * b)
+                        pixels[px, py] = (min(tr, 255), min(tg, 255), min(tb, 255))
+                return img
+            
+            sepia_img = make_sepia(image.copy())
+            image = Image.blend(image, sepia_img, intensity)
+
+        elif op == "color_tint":
+            # Tiñe la imagen con un color específico (R, G, B)
+            r = int(params.get("r", 255))
+            g = int(params.get("g", 255))
+            b = int(params.get("b", 255))
+            intensity = float(params.get("intensity", 0.3))
+            tint = Image.new("RGB", image.size, (r, g, b))
+            image = Image.blend(image, tint, intensity)
+
+        elif op == "posterize":
+            # Reduce bits por canal (1 a 8). 1-4 produce efectos tipo cómic/Warhol
+            bits = int(params.get("bits", 4))
+            image = ImageOps.posterize(image, min(max(bits, 1), 8))
+
+        elif op == "crop":
             box = (float(params["left"]), float(params["upper"]), float(params["right"]), float(params["lower"]))
             image = image.crop(box)
             
-        elif operation == "rotate":
-            angle = float(params.get("angle", "0"))
+        elif op == "rotate":
+            angle = float(params.get("angle", 0))
             expand = str(params.get("expand", "true")).lower() == "true"
-            image = image.rotate(angle, expand=expand, resample=Image.Resampling.BICUBIC)
+            fill_color = params.get("fill_color", None) 
+            image = image.rotate(angle, expand=expand, resample=Image.Resampling.BICUBIC, fillcolor=fill_color)
             
-        elif operation == "flip":
+        elif op == "flip":
             direction = params.get("direction", "horizontal").lower()
             if direction == "vertical": 
                 image = ImageOps.flip(image)
@@ -146,94 +205,75 @@ class ImageWorker:
             else: 
                 image = ImageOps.mirror(image)
                 
-        elif operation == "blur":
-            radius = float(params.get("radius", "1.5"))
+        elif op == "blur":
+            radius = float(params.get("radius", 2.0))
             image = image.filter(ImageFilter.GaussianBlur(radius=radius))
             
-        elif operation == "sharpen":
-            factor = float(params.get("factor", "2.0"))
+        elif op == "sharpen":
+            factor = float(params.get("factor", 2.0))
             image = ImageEnhance.Sharpness(image).enhance(factor)
             
-        elif operation == "brightness_contrast":
-            b = float(params.get("brightness", "1.0"))
-            c = float(params.get("contrast", "1.0"))
-            image = ImageEnhance.Brightness(image).enhance(b)
-            image = ImageEnhance.Contrast(image).enhance(c)
+        elif op in ["brightness", "contrast", "brightness_contrast"]:
+            b = float(params.get("brightness", 1.0))
+            c = float(params.get("contrast", 1.0))
+            if b != 1.0:
+                image = ImageEnhance.Brightness(image).enhance(b)
+            if c != 1.0:
+                image = ImageEnhance.Contrast(image).enhance(c)
             
-        elif operation == "watermark_text":
-            text = params.get("text", "WATERMARK")
+        elif op == "watermark_text":
+            text = params.get("text", "A2WS NODE")
+            opacity = int(params.get("opacity", 80))
+            font_size = int(params.get("size", 60))
+            angle = float(params.get("angle", 45))
+            color = params.get("color", "white").lower()
+            
+            color_map = {"white": (255, 255, 255), "black": (0, 0, 0), "red": (255, 0, 0), "blue": (0, 0, 255)}
+            rgb_color = color_map.get(color, (255, 255, 255))
+            fill_tuple = (*rgb_color, opacity)
+            stroke_tuple = (0, 0, 0, opacity) if color != "black" else (255, 255, 255, opacity)
+
             is_rgb = image.mode != "RGBA"
-            if is_rgb:
-                image = image.convert("RGBA")
+            if is_rgb: image = image.convert("RGBA")
             
             width, height = image.size
-            
             try:
                 from PIL import ImageFont
-                font = ImageFont.truetype("arial.ttf", 60)
-            except Exception:
-                try:
-                    font = ImageFont.load_default(size=40)
-                except:
-                    font = ImageFont.load_default()
+                font = ImageFont.truetype("arial.ttf", font_size)
+            except:
+                font = ImageFont.load_default()
 
-            # Creamos una capa extra-grande para poder rotarla sin recortar las esquinas
             diag = int(math.hypot(width, height))
             overlay = Image.new("RGBA", (diag, diag), (255, 255, 255, 0))
             draw = ImageDraw.Draw(overlay)
             
-            # Calculamos las dimensiones del texto para el patrón (grid)
             try:
                 left, top, right, bottom = font.getbbox(text)
                 tw, th = right - left, bottom - top
-            except AttributeError:
+            except:
                 tw, th = font.getsize(text)
                 
-            tw = max(int(tw), 1) + 100  # Espaciado horizontal
-            th = max(int(th), 1) + 120  # Espaciado vertical
+            tw = max(int(tw), 1) + 150
+            th = max(int(th), 1) + 150
             
-            # Colores semi-transparentes: relleno blanco, borde negro ("Bulletproof" siempre se lee)
-            fill_color = (255, 255, 255, 80)
-            stroke_color = (0, 0, 0, 80)
-            
-            # Llenamos la capa grande con el patrón
             for y in range(0, diag, th):
-                # Efecto en mampostería (ladrillo alternado) para mejor estética
                 offset_x = (y // th) % 2 * (tw // 2)
                 for x in range(-tw, diag, tw):
-                    draw.text(
-                        (x + offset_x, y), 
-                        text, 
-                        font=font, 
-                        fill=fill_color, 
-                        stroke_width=3, 
-                        stroke_fill=stroke_color
-                    )
+                    draw.text((x + offset_x, y), text, font=font, fill=fill_tuple,
+                             stroke_width=2, stroke_fill=stroke_tuple)
             
-            # Rotamos la capa 45 grados para la estetica diagonal
-            overlay = overlay.rotate(45, resample=Image.Resampling.BICUBIC)
-            
-            # Cortamos exactamente el centro para encajar en la imagen original
-            box = (
-                (diag - width) // 2, 
-                (diag - height) // 2, 
-                (diag + width) // 2, 
-                (diag + height) // 2
-            )
+            overlay = overlay.rotate(angle, resample=Image.Resampling.BICUBIC)
+            box = ((diag - width) // 2, (diag - height) // 2, (diag + width) // 2, (diag + height) // 2)
             overlay = overlay.crop(box)
-            
-            # Fusionamos la marca de agua con la imagen original
             image = Image.alpha_composite(image, overlay)
             
-            if is_rgb:
-                image = image.convert("RGB")
-
+            if is_rgb: image = image.convert("RGB")
             
-        elif operation == "ocr":
+        elif op == "ocr":
             meta = self._run_ocr_internal(image, params)
             metadata.update(meta)
             
-        elif operation == "inference":
+        elif op == "inference":
             meta = self._run_inference_internal(image, params)
             metadata.update(meta)
             

@@ -31,26 +31,122 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Tarea de imagen publicada por el orquestador
-type ImageTask struct {
+type TransformationItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TaskId        string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	ImageData     []byte                 `protobuf:"bytes,2,opt,name=image_data,json=imageData,proto3" json:"image_data,omitempty"`                                                         // <-- ¡AQUÍ VIAJAN LOS BITS! (Adiós Base64)
-	Filename      string                 `protobuf:"bytes,3,opt,name=filename,proto3" json:"filename,omitempty"`                                                                            // Ej: "reloj.png"
-	FilterType    string                 `protobuf:"bytes,4,opt,name=filter_type,json=filterType,proto3" json:"filter_type,omitempty"`                                                      // Ej: "blur", "ocr", "grayscale"
-	EnqueueTs     int64                  `protobuf:"varint,5,opt,name=enqueue_ts,json=enqueueTs,proto3" json:"enqueue_ts,omitempty"`                                                        // Tiempo en el que entró a la cola
-	Priority      int32                  `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"`                                                                           // Prioridad (0 por defecto)
-	TargetWidth   int32                  `protobuf:"varint,7,opt,name=target_width,json=targetWidth,proto3" json:"target_width,omitempty"`                                                  // (Opcional) Ancho a redimensionar
-	TargetHeight  int32                  `protobuf:"varint,8,opt,name=target_height,json=targetHeight,proto3" json:"target_height,omitempty"`                                               // (Opcional) Alto a redimensionar
-	ImageFormat   string                 `protobuf:"bytes,9,opt,name=image_format,json=imageFormat,proto3" json:"image_format,omitempty"`                                                   // (Opcional) Formato de la imagen
-	Metadata      map[string]string      `protobuf:"bytes,10,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Metadatos de contexto opcionales
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	ParamsJson    string                 `protobuf:"bytes,2,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *TransformationItem) Reset() {
+	*x = TransformationItem{}
+	mi := &file_orchestrator_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransformationItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransformationItem) ProtoMessage() {}
+
+func (x *TransformationItem) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransformationItem.ProtoReflect.Descriptor instead.
+func (*TransformationItem) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *TransformationItem) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *TransformationItem) GetParamsJson() string {
+	if x != nil {
+		return x.ParamsJson
+	}
+	return ""
+}
+
+type TransformationPipeline struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Items         []*TransformationItem  `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransformationPipeline) Reset() {
+	*x = TransformationPipeline{}
+	mi := &file_orchestrator_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransformationPipeline) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransformationPipeline) ProtoMessage() {}
+
+func (x *TransformationPipeline) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransformationPipeline.ProtoReflect.Descriptor instead.
+func (*TransformationPipeline) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TransformationPipeline) GetItems() []*TransformationItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+// Tarea de imagen publicada por el orquestador
+type ImageTask struct {
+	state                  protoimpl.MessageState  `protogen:"open.v1"`
+	TaskId                 string                  `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ImageData              []byte                  `protobuf:"bytes,2,opt,name=image_data,json=imageData,proto3" json:"image_data,omitempty"` // <-- ¡AQUÍ VIAJAN LOS BITS! (Adiós Base64)
+	Filename               string                  `protobuf:"bytes,3,opt,name=filename,proto3" json:"filename,omitempty"`                    // Ej: "reloj.png"
+	TransformationPipeline *TransformationPipeline `protobuf:"bytes,4,opt,name=transformation_pipeline,json=transformationPipeline,proto3" json:"transformation_pipeline,omitempty"`
+	EnqueueTs              int64                   `protobuf:"varint,5,opt,name=enqueue_ts,json=enqueueTs,proto3" json:"enqueue_ts,omitempty"`                                                        // Tiempo en el que entró a la cola
+	Priority               int32                   `protobuf:"varint,6,opt,name=priority,proto3" json:"priority,omitempty"`                                                                           // Prioridad (0 por defecto)
+	TargetWidth            int32                   `protobuf:"varint,7,opt,name=target_width,json=targetWidth,proto3" json:"target_width,omitempty"`                                                  // (Opcional) Ancho a redimensionar
+	TargetHeight           int32                   `protobuf:"varint,8,opt,name=target_height,json=targetHeight,proto3" json:"target_height,omitempty"`                                               // (Opcional) Alto a redimensionar
+	ImageFormat            string                  `protobuf:"bytes,9,opt,name=image_format,json=imageFormat,proto3" json:"image_format,omitempty"`                                                   // (Opcional) Formato de la imagen
+	Metadata               map[string]string       `protobuf:"bytes,10,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Metadatos de contexto opcionales
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
 func (x *ImageTask) Reset() {
 	*x = ImageTask{}
-	mi := &file_orchestrator_proto_msgTypes[0]
+	mi := &file_orchestrator_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -62,7 +158,7 @@ func (x *ImageTask) String() string {
 func (*ImageTask) ProtoMessage() {}
 
 func (x *ImageTask) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[0]
+	mi := &file_orchestrator_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -75,7 +171,7 @@ func (x *ImageTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImageTask.ProtoReflect.Descriptor instead.
 func (*ImageTask) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{0}
+	return file_orchestrator_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ImageTask) GetTaskId() string {
@@ -99,11 +195,11 @@ func (x *ImageTask) GetFilename() string {
 	return ""
 }
 
-func (x *ImageTask) GetFilterType() string {
+func (x *ImageTask) GetTransformationPipeline() *TransformationPipeline {
 	if x != nil {
-		return x.FilterType
+		return x.TransformationPipeline
 	}
-	return ""
+	return nil
 }
 
 func (x *ImageTask) GetEnqueueTs() int64 {
@@ -172,7 +268,7 @@ type NodeMetrics struct {
 
 func (x *NodeMetrics) Reset() {
 	*x = NodeMetrics{}
-	mi := &file_orchestrator_proto_msgTypes[1]
+	mi := &file_orchestrator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -184,7 +280,7 @@ func (x *NodeMetrics) String() string {
 func (*NodeMetrics) ProtoMessage() {}
 
 func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[1]
+	mi := &file_orchestrator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -197,7 +293,7 @@ func (x *NodeMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeMetrics.ProtoReflect.Descriptor instead.
 func (*NodeMetrics) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{1}
+	return file_orchestrator_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *NodeMetrics) GetNodeId() string {
@@ -317,7 +413,7 @@ type PullRequest struct {
 
 func (x *PullRequest) Reset() {
 	*x = PullRequest{}
-	mi := &file_orchestrator_proto_msgTypes[2]
+	mi := &file_orchestrator_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -329,7 +425,7 @@ func (x *PullRequest) String() string {
 func (*PullRequest) ProtoMessage() {}
 
 func (x *PullRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[2]
+	mi := &file_orchestrator_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -342,7 +438,7 @@ func (x *PullRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullRequest.ProtoReflect.Descriptor instead.
 func (*PullRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{2}
+	return file_orchestrator_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *PullRequest) GetNodeId() string {
@@ -376,7 +472,7 @@ type PullResponse struct {
 
 func (x *PullResponse) Reset() {
 	*x = PullResponse{}
-	mi := &file_orchestrator_proto_msgTypes[3]
+	mi := &file_orchestrator_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -388,7 +484,7 @@ func (x *PullResponse) String() string {
 func (*PullResponse) ProtoMessage() {}
 
 func (x *PullResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[3]
+	mi := &file_orchestrator_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -401,7 +497,7 @@ func (x *PullResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullResponse.ProtoReflect.Descriptor instead.
 func (*PullResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{3}
+	return file_orchestrator_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PullResponse) GetTasks() []*ImageTask {
@@ -438,7 +534,7 @@ type TaskResult struct {
 
 func (x *TaskResult) Reset() {
 	*x = TaskResult{}
-	mi := &file_orchestrator_proto_msgTypes[4]
+	mi := &file_orchestrator_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -450,7 +546,7 @@ func (x *TaskResult) String() string {
 func (*TaskResult) ProtoMessage() {}
 
 func (x *TaskResult) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[4]
+	mi := &file_orchestrator_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -463,7 +559,7 @@ func (x *TaskResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskResult.ProtoReflect.Descriptor instead.
 func (*TaskResult) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{4}
+	return file_orchestrator_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TaskResult) GetTaskId() string {
@@ -555,7 +651,7 @@ type StealRequest struct {
 
 func (x *StealRequest) Reset() {
 	*x = StealRequest{}
-	mi := &file_orchestrator_proto_msgTypes[5]
+	mi := &file_orchestrator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -567,7 +663,7 @@ func (x *StealRequest) String() string {
 func (*StealRequest) ProtoMessage() {}
 
 func (x *StealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[5]
+	mi := &file_orchestrator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -580,7 +676,7 @@ func (x *StealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StealRequest.ProtoReflect.Descriptor instead.
 func (*StealRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{5}
+	return file_orchestrator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StealRequest) GetThiefNodeId() string {
@@ -615,7 +711,7 @@ type StealResponse struct {
 
 func (x *StealResponse) Reset() {
 	*x = StealResponse{}
-	mi := &file_orchestrator_proto_msgTypes[6]
+	mi := &file_orchestrator_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -627,7 +723,7 @@ func (x *StealResponse) String() string {
 func (*StealResponse) ProtoMessage() {}
 
 func (x *StealResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[6]
+	mi := &file_orchestrator_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -640,7 +736,7 @@ func (x *StealResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StealResponse.ProtoReflect.Descriptor instead.
 func (*StealResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{6}
+	return file_orchestrator_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StealResponse) GetStolenTasks() []*ImageTask {
@@ -677,7 +773,7 @@ type TaskProgress struct {
 
 func (x *TaskProgress) Reset() {
 	*x = TaskProgress{}
-	mi := &file_orchestrator_proto_msgTypes[7]
+	mi := &file_orchestrator_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -689,7 +785,7 @@ func (x *TaskProgress) String() string {
 func (*TaskProgress) ProtoMessage() {}
 
 func (x *TaskProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[7]
+	mi := &file_orchestrator_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -702,7 +798,7 @@ func (x *TaskProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskProgress.ProtoReflect.Descriptor instead.
 func (*TaskProgress) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{7}
+	return file_orchestrator_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *TaskProgress) GetTaskId() string {
@@ -743,7 +839,7 @@ type QueueStatusRequest struct {
 
 func (x *QueueStatusRequest) Reset() {
 	*x = QueueStatusRequest{}
-	mi := &file_orchestrator_proto_msgTypes[8]
+	mi := &file_orchestrator_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -755,7 +851,7 @@ func (x *QueueStatusRequest) String() string {
 func (*QueueStatusRequest) ProtoMessage() {}
 
 func (x *QueueStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[8]
+	mi := &file_orchestrator_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -768,7 +864,7 @@ func (x *QueueStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueueStatusRequest.ProtoReflect.Descriptor instead.
 func (*QueueStatusRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{8}
+	return file_orchestrator_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *QueueStatusRequest) GetRequesterId() string {
@@ -792,7 +888,7 @@ type NodeQueueInfo struct {
 
 func (x *NodeQueueInfo) Reset() {
 	*x = NodeQueueInfo{}
-	mi := &file_orchestrator_proto_msgTypes[9]
+	mi := &file_orchestrator_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -804,7 +900,7 @@ func (x *NodeQueueInfo) String() string {
 func (*NodeQueueInfo) ProtoMessage() {}
 
 func (x *NodeQueueInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[9]
+	mi := &file_orchestrator_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -817,7 +913,7 @@ func (x *NodeQueueInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeQueueInfo.ProtoReflect.Descriptor instead.
 func (*NodeQueueInfo) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{9}
+	return file_orchestrator_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *NodeQueueInfo) GetNodeId() string {
@@ -874,7 +970,7 @@ type QueueStatusResponse struct {
 
 func (x *QueueStatusResponse) Reset() {
 	*x = QueueStatusResponse{}
-	mi := &file_orchestrator_proto_msgTypes[10]
+	mi := &file_orchestrator_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -886,7 +982,7 @@ func (x *QueueStatusResponse) String() string {
 func (*QueueStatusResponse) ProtoMessage() {}
 
 func (x *QueueStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[10]
+	mi := &file_orchestrator_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -899,7 +995,7 @@ func (x *QueueStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueueStatusResponse.ProtoReflect.Descriptor instead.
 func (*QueueStatusResponse) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{10}
+	return file_orchestrator_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *QueueStatusResponse) GetCentralQueueSize() int32 {
@@ -930,6 +1026,137 @@ func (x *QueueStatusResponse) GetTimestamp() int64 {
 	return 0
 }
 
+// ─── Registro de nodo (autodescubrimiento) ───────────────────────────────────
+type RegisterNodeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`          // Identificador único del nodo (ej. "nodo-go-1")
+	IpAddress     string                 `protobuf:"bytes,2,opt,name=ip_address,json=ipAddress,proto3" json:"ip_address,omitempty"` // IP real del nodo en la red
+	Port          int32                  `protobuf:"varint,3,opt,name=port,proto3" json:"port,omitempty"`                           // Puerto gRPC en el que el nodo expone su servicio
+	Metrics       *NodeMetrics           `protobuf:"bytes,4,opt,name=metrics,proto3" json:"metrics,omitempty"`                      // Snapshot inicial de métricas (workers, cola, etc.)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterNodeRequest) Reset() {
+	*x = RegisterNodeRequest{}
+	mi := &file_orchestrator_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterNodeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterNodeRequest) ProtoMessage() {}
+
+func (x *RegisterNodeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterNodeRequest.ProtoReflect.Descriptor instead.
+func (*RegisterNodeRequest) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *RegisterNodeRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *RegisterNodeRequest) GetIpAddress() string {
+	if x != nil {
+		return x.IpAddress
+	}
+	return ""
+}
+
+func (x *RegisterNodeRequest) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *RegisterNodeRequest) GetMetrics() *NodeMetrics {
+	if x != nil {
+		return x.Metrics
+	}
+	return nil
+}
+
+type RegisterNodeResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ok    bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	// "REGISTERED" = nodo nuevo registrado correctamente
+	// "UPDATED"    = nodo ya existía, solo se actualizó su estado
+	Status        string `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Msg           string `protobuf:"bytes,3,opt,name=msg,proto3" json:"msg,omitempty"` // Mensaje descriptivo opcional del servidor
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterNodeResponse) Reset() {
+	*x = RegisterNodeResponse{}
+	mi := &file_orchestrator_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterNodeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterNodeResponse) ProtoMessage() {}
+
+func (x *RegisterNodeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterNodeResponse.ProtoReflect.Descriptor instead.
+func (*RegisterNodeResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *RegisterNodeResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *RegisterNodeResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *RegisterNodeResponse) GetMsg() string {
+	if x != nil {
+		return x.Msg
+	}
+	return ""
+}
+
 // ─── Heartbeat ────────────────────────────────────────────────────────────────
 type HeartbeatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -942,7 +1169,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_orchestrator_proto_msgTypes[11]
+	mi := &file_orchestrator_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -954,7 +1181,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[11]
+	mi := &file_orchestrator_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -967,7 +1194,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{11}
+	return file_orchestrator_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HeartbeatRequest) GetNodeId() string {
@@ -992,6 +1219,126 @@ func (x *HeartbeatRequest) GetMetrics() *NodeMetrics {
 }
 
 // ─── Ack genérico ─────────────────────────────────────────────────────────────
+type LogRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	NodeId           string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	ImageUuid        string                 `protobuf:"bytes,2,opt,name=image_uuid,json=imageUuid,proto3" json:"image_uuid,omitempty"`
+	Level            string                 `protobuf:"bytes,3,opt,name=level,proto3" json:"level,omitempty"` // INFO, WARNING, ERROR, CRITICAL
+	Message          string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	TransformationId int32                  `protobuf:"varint,5,opt,name=transformation_id,json=transformationId,proto3" json:"transformation_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *LogRequest) Reset() {
+	*x = LogRequest{}
+	mi := &file_orchestrator_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogRequest) ProtoMessage() {}
+
+func (x *LogRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogRequest.ProtoReflect.Descriptor instead.
+func (*LogRequest) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *LogRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *LogRequest) GetImageUuid() string {
+	if x != nil {
+		return x.ImageUuid
+	}
+	return ""
+}
+
+func (x *LogRequest) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *LogRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *LogRequest) GetTransformationId() int32 {
+	if x != nil {
+		return x.TransformationId
+	}
+	return 0
+}
+
+type LogResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogResponse) Reset() {
+	*x = LogResponse{}
+	mi := &file_orchestrator_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogResponse) ProtoMessage() {}
+
+func (x *LogResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orchestrator_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogResponse.ProtoReflect.Descriptor instead.
+func (*LogResponse) Descriptor() ([]byte, []int) {
+	return file_orchestrator_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *LogResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 type Ack struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
@@ -1002,7 +1349,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_orchestrator_proto_msgTypes[12]
+	mi := &file_orchestrator_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1014,7 +1361,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_orchestrator_proto_msgTypes[12]
+	mi := &file_orchestrator_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1027,7 +1374,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_orchestrator_proto_rawDescGZIP(), []int{12}
+	return file_orchestrator_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Ack) GetOk() bool {
@@ -1048,14 +1395,19 @@ var File_orchestrator_proto protoreflect.FileDescriptor
 
 const file_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x12orchestrator.proto\x12\x06worker\"\xa0\x03\n" +
+	"\x12orchestrator.proto\x12\x06worker\"I\n" +
+	"\x12TransformationItem\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1f\n" +
+	"\vparams_json\x18\x02 \x01(\tR\n" +
+	"paramsJson\"J\n" +
+	"\x16TransformationPipeline\x120\n" +
+	"\x05items\x18\x01 \x03(\v2\x1a.worker.TransformationItemR\x05items\"\xd8\x03\n" +
 	"\tImageTask\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
 	"image_data\x18\x02 \x01(\fR\timageData\x12\x1a\n" +
-	"\bfilename\x18\x03 \x01(\tR\bfilename\x12\x1f\n" +
-	"\vfilter_type\x18\x04 \x01(\tR\n" +
-	"filterType\x12\x1d\n" +
+	"\bfilename\x18\x03 \x01(\tR\bfilename\x12W\n" +
+	"\x17transformation_pipeline\x18\x04 \x01(\v2\x1e.worker.TransformationPipelineR\x16transformationPipeline\x12\x1d\n" +
 	"\n" +
 	"enqueue_ts\x18\x05 \x01(\x03R\tenqueueTs\x12\x1a\n" +
 	"\bpriority\x18\x06 \x01(\x05R\bpriority\x12!\n" +
@@ -1143,16 +1495,38 @@ const file_orchestrator_proto_rawDesc = "" +
 	"\x12central_queue_size\x18\x01 \x01(\x05R\x10centralQueueSize\x12*\n" +
 	"\x11central_queue_cap\x18\x02 \x01(\x05R\x0fcentralQueueCap\x12+\n" +
 	"\x05nodes\x18\x03 \x03(\v2\x15.worker.NodeQueueInfoR\x05nodes\x12\x1c\n" +
-	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"y\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\"\x90\x01\n" +
+	"\x13RegisterNodeRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1d\n" +
+	"\n" +
+	"ip_address\x18\x02 \x01(\tR\tipAddress\x12\x12\n" +
+	"\x04port\x18\x03 \x01(\x05R\x04port\x12-\n" +
+	"\ametrics\x18\x04 \x01(\v2\x13.worker.NodeMetricsR\ametrics\"P\n" +
+	"\x14RegisterNodeResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x10\n" +
+	"\x03msg\x18\x03 \x01(\tR\x03msg\"y\n" +
 	"\x10HeartbeatRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1d\n" +
 	"\n" +
 	"ip_address\x18\x02 \x01(\tR\tipAddress\x12-\n" +
-	"\ametrics\x18\x03 \x01(\v2\x13.worker.NodeMetricsR\ametrics\"'\n" +
+	"\ametrics\x18\x03 \x01(\v2\x13.worker.NodeMetricsR\ametrics\"\xa1\x01\n" +
+	"\n" +
+	"LogRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1d\n" +
+	"\n" +
+	"image_uuid\x18\x02 \x01(\tR\timageUuid\x12\x14\n" +
+	"\x05level\x18\x03 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\x12+\n" +
+	"\x11transformation_id\x18\x05 \x01(\x05R\x10transformationId\"\x1d\n" +
+	"\vLogResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"'\n" +
 	"\x03Ack\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x10\n" +
-	"\x03msg\x18\x02 \x01(\tR\x03msg2\xb7\x03\n" +
-	"\fOrchestrator\x126\n" +
+	"\x03msg\x18\x02 \x01(\tR\x03msg2\xb7\x04\n" +
+	"\fOrchestrator\x12I\n" +
+	"\fRegisterNode\x12\x1b.worker.RegisterNodeRequest\x1a\x1c.worker.RegisterNodeResponse\x123\n" +
+	"\bLogEvent\x12\x12.worker.LogRequest\x1a\x13.worker.LogResponse\x126\n" +
 	"\tPullTasks\x12\x13.worker.PullRequest\x1a\x14.worker.PullResponse\x12/\n" +
 	"\fSubmitResult\x12\x12.worker.TaskResult\x1a\v.worker.Ack\x129\n" +
 	"\n" +
@@ -1182,56 +1556,69 @@ func file_orchestrator_proto_rawDescGZIP() []byte {
 	return file_orchestrator_proto_rawDescData
 }
 
-var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_orchestrator_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_orchestrator_proto_goTypes = []any{
-	(*ImageTask)(nil),           // 0: worker.ImageTask
-	(*NodeMetrics)(nil),         // 1: worker.NodeMetrics
-	(*PullRequest)(nil),         // 2: worker.PullRequest
-	(*PullResponse)(nil),        // 3: worker.PullResponse
-	(*TaskResult)(nil),          // 4: worker.TaskResult
-	(*StealRequest)(nil),        // 5: worker.StealRequest
-	(*StealResponse)(nil),       // 6: worker.StealResponse
-	(*TaskProgress)(nil),        // 7: worker.TaskProgress
-	(*QueueStatusRequest)(nil),  // 8: worker.QueueStatusRequest
-	(*NodeQueueInfo)(nil),       // 9: worker.NodeQueueInfo
-	(*QueueStatusResponse)(nil), // 10: worker.QueueStatusResponse
-	(*HeartbeatRequest)(nil),    // 11: worker.HeartbeatRequest
-	(*Ack)(nil),                 // 12: worker.Ack
-	nil,                         // 13: worker.ImageTask.MetadataEntry
-	nil,                         // 14: worker.TaskResult.MetadataEntry
+	(*TransformationItem)(nil),     // 0: worker.TransformationItem
+	(*TransformationPipeline)(nil), // 1: worker.TransformationPipeline
+	(*ImageTask)(nil),              // 2: worker.ImageTask
+	(*NodeMetrics)(nil),            // 3: worker.NodeMetrics
+	(*PullRequest)(nil),            // 4: worker.PullRequest
+	(*PullResponse)(nil),           // 5: worker.PullResponse
+	(*TaskResult)(nil),             // 6: worker.TaskResult
+	(*StealRequest)(nil),           // 7: worker.StealRequest
+	(*StealResponse)(nil),          // 8: worker.StealResponse
+	(*TaskProgress)(nil),           // 9: worker.TaskProgress
+	(*QueueStatusRequest)(nil),     // 10: worker.QueueStatusRequest
+	(*NodeQueueInfo)(nil),          // 11: worker.NodeQueueInfo
+	(*QueueStatusResponse)(nil),    // 12: worker.QueueStatusResponse
+	(*RegisterNodeRequest)(nil),    // 13: worker.RegisterNodeRequest
+	(*RegisterNodeResponse)(nil),   // 14: worker.RegisterNodeResponse
+	(*HeartbeatRequest)(nil),       // 15: worker.HeartbeatRequest
+	(*LogRequest)(nil),             // 16: worker.LogRequest
+	(*LogResponse)(nil),            // 17: worker.LogResponse
+	(*Ack)(nil),                    // 18: worker.Ack
+	nil,                            // 19: worker.ImageTask.MetadataEntry
+	nil,                            // 20: worker.TaskResult.MetadataEntry
 }
 var file_orchestrator_proto_depIdxs = []int32{
-	13, // 0: worker.ImageTask.metadata:type_name -> worker.ImageTask.MetadataEntry
-	1,  // 1: worker.PullRequest.metrics:type_name -> worker.NodeMetrics
-	0,  // 2: worker.PullResponse.tasks:type_name -> worker.ImageTask
-	1,  // 3: worker.TaskResult.metrics:type_name -> worker.NodeMetrics
-	14, // 4: worker.TaskResult.metadata:type_name -> worker.TaskResult.MetadataEntry
-	0,  // 5: worker.StealResponse.stolen_tasks:type_name -> worker.ImageTask
-	9,  // 6: worker.QueueStatusResponse.nodes:type_name -> worker.NodeQueueInfo
-	1,  // 7: worker.HeartbeatRequest.metrics:type_name -> worker.NodeMetrics
-	2,  // 8: worker.Orchestrator.PullTasks:input_type -> worker.PullRequest
-	4,  // 9: worker.Orchestrator.SubmitResult:input_type -> worker.TaskResult
-	5,  // 10: worker.Orchestrator.StealTasks:input_type -> worker.StealRequest
-	7,  // 11: worker.Orchestrator.UpdateTaskProgress:input_type -> worker.TaskProgress
-	11, // 12: worker.Orchestrator.SendHeartbeat:input_type -> worker.HeartbeatRequest
-	8,  // 13: worker.Orchestrator.GetQueueStatus:input_type -> worker.QueueStatusRequest
-	8,  // 14: worker.Orchestrator.WatchQueue:input_type -> worker.QueueStatusRequest
-	8,  // 15: worker.WorkerNode.GetMetrics:input_type -> worker.QueueStatusRequest
-	5,  // 16: worker.WorkerNode.YieldTasks:input_type -> worker.StealRequest
-	3,  // 17: worker.Orchestrator.PullTasks:output_type -> worker.PullResponse
-	12, // 18: worker.Orchestrator.SubmitResult:output_type -> worker.Ack
-	6,  // 19: worker.Orchestrator.StealTasks:output_type -> worker.StealResponse
-	12, // 20: worker.Orchestrator.UpdateTaskProgress:output_type -> worker.Ack
-	12, // 21: worker.Orchestrator.SendHeartbeat:output_type -> worker.Ack
-	10, // 22: worker.Orchestrator.GetQueueStatus:output_type -> worker.QueueStatusResponse
-	10, // 23: worker.Orchestrator.WatchQueue:output_type -> worker.QueueStatusResponse
-	1,  // 24: worker.WorkerNode.GetMetrics:output_type -> worker.NodeMetrics
-	6,  // 25: worker.WorkerNode.YieldTasks:output_type -> worker.StealResponse
-	17, // [17:26] is the sub-list for method output_type
-	8,  // [8:17] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	0,  // 0: worker.TransformationPipeline.items:type_name -> worker.TransformationItem
+	1,  // 1: worker.ImageTask.transformation_pipeline:type_name -> worker.TransformationPipeline
+	19, // 2: worker.ImageTask.metadata:type_name -> worker.ImageTask.MetadataEntry
+	3,  // 3: worker.PullRequest.metrics:type_name -> worker.NodeMetrics
+	2,  // 4: worker.PullResponse.tasks:type_name -> worker.ImageTask
+	3,  // 5: worker.TaskResult.metrics:type_name -> worker.NodeMetrics
+	20, // 6: worker.TaskResult.metadata:type_name -> worker.TaskResult.MetadataEntry
+	2,  // 7: worker.StealResponse.stolen_tasks:type_name -> worker.ImageTask
+	11, // 8: worker.QueueStatusResponse.nodes:type_name -> worker.NodeQueueInfo
+	3,  // 9: worker.RegisterNodeRequest.metrics:type_name -> worker.NodeMetrics
+	3,  // 10: worker.HeartbeatRequest.metrics:type_name -> worker.NodeMetrics
+	13, // 11: worker.Orchestrator.RegisterNode:input_type -> worker.RegisterNodeRequest
+	16, // 12: worker.Orchestrator.LogEvent:input_type -> worker.LogRequest
+	4,  // 13: worker.Orchestrator.PullTasks:input_type -> worker.PullRequest
+	6,  // 14: worker.Orchestrator.SubmitResult:input_type -> worker.TaskResult
+	7,  // 15: worker.Orchestrator.StealTasks:input_type -> worker.StealRequest
+	9,  // 16: worker.Orchestrator.UpdateTaskProgress:input_type -> worker.TaskProgress
+	15, // 17: worker.Orchestrator.SendHeartbeat:input_type -> worker.HeartbeatRequest
+	10, // 18: worker.Orchestrator.GetQueueStatus:input_type -> worker.QueueStatusRequest
+	10, // 19: worker.Orchestrator.WatchQueue:input_type -> worker.QueueStatusRequest
+	10, // 20: worker.WorkerNode.GetMetrics:input_type -> worker.QueueStatusRequest
+	7,  // 21: worker.WorkerNode.YieldTasks:input_type -> worker.StealRequest
+	14, // 22: worker.Orchestrator.RegisterNode:output_type -> worker.RegisterNodeResponse
+	17, // 23: worker.Orchestrator.LogEvent:output_type -> worker.LogResponse
+	5,  // 24: worker.Orchestrator.PullTasks:output_type -> worker.PullResponse
+	18, // 25: worker.Orchestrator.SubmitResult:output_type -> worker.Ack
+	8,  // 26: worker.Orchestrator.StealTasks:output_type -> worker.StealResponse
+	18, // 27: worker.Orchestrator.UpdateTaskProgress:output_type -> worker.Ack
+	18, // 28: worker.Orchestrator.SendHeartbeat:output_type -> worker.Ack
+	12, // 29: worker.Orchestrator.GetQueueStatus:output_type -> worker.QueueStatusResponse
+	12, // 30: worker.Orchestrator.WatchQueue:output_type -> worker.QueueStatusResponse
+	3,  // 31: worker.WorkerNode.GetMetrics:output_type -> worker.NodeMetrics
+	8,  // 32: worker.WorkerNode.YieldTasks:output_type -> worker.StealResponse
+	22, // [22:33] is the sub-list for method output_type
+	11, // [11:22] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_orchestrator_proto_init() }
@@ -1245,7 +1632,7 @@ func file_orchestrator_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orchestrator_proto_rawDesc), len(file_orchestrator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

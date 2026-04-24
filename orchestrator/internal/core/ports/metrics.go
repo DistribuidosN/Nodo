@@ -11,4 +11,5 @@ type MetricsRepository interface {
 	IncrementBusyWorkers(i int32)
 	SetQueueSize(size int32)
 	RecordSteal(count int32)
+	UpdateSystemMetrics(cpuPercent, ramUsedMB, ramTotalMB float32)
 }
