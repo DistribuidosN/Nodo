@@ -92,6 +92,15 @@ class ImageWorker:
         for transform in transforms:
             operation = transform.get("operation", "").lower()
             params = transform.get("params", {})
+            
+            # Interceptamos la operación de formato para cambiar el tipo de salida dinámicamente
+            if operation in ["convert", "format"]:
+                new_format = params.get("format") or params.get("extension")
+                if new_format:
+                    output_format = str(new_format).lower()
+                    print(f"[Python-Worker] Cambiando formato de salida dinámicamente a {output_format}", file=sys.stderr)
+                continue
+                
             print(f"[Python-Worker] Aplicando {operation} a la tarea {task_id}", file=sys.stderr)
             image, step_metadata = self._apply_transform(image, operation, params)
             if step_metadata:

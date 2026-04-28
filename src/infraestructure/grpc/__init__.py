@@ -1,1 +1,0 @@
-# infraestructure/grpc package
