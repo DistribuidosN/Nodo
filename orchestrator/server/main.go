@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -79,7 +80,15 @@ func main() {
 	}
 
 	javaOrchestratorURL := getEnvOrDefault("JAVA_ORCHESTRATOR_URL", "http://localhost:9000")
-	localGrpcPort       := getEnvOrDefault("LOCAL_GRPC_PORT", ":50051")
+	localGrpcHost       := getEnvOrDefault("LOCAL_GRPC_HOST", "0.0.0.0")
+	localGrpcPort       := getEnvOrDefault("LOCAL_GRPC_PORT", "50051")
+
+	// Asegurar que el puerto tenga el prefijo ":" para net.JoinHostPort o concatenación
+	cleanPort := localGrpcPort
+	if strings.HasPrefix(cleanPort, ":") {
+		cleanPort = cleanPort[1:]
+	}
+	serverAddr := net.JoinHostPort(localGrpcHost, cleanPort)
 	pythonScript        := getEnvOrDefault("PYTHON_SCRIPT", "../../worker/worker.py")
 	nodeID              := getEnvOrDefault("NODE_ID", generateNodeID())
 	localIP             := getLocalIP()
@@ -114,7 +123,7 @@ func main() {
 	log.Printf("======================================")
 	log.Printf(" Node ID        : %s", nodeID)
 	log.Printf(" IP Local       : %s", localIP)
-	log.Printf(" Puerto gRPC    : %s", localGrpcPort)
+	log.Printf(" Escuchando en  : %s", serverAddr)
 	log.Printf(" Python Script  : %s", pythonScript)
 	log.Printf(" Server Java    : %s", javaOrchestratorURL)
 	log.Printf(" Workers        : %d (2*CPU-1 = 2*%d-1)", numWorkers, runtime.NumCPU())
@@ -181,12 +190,12 @@ func main() {
 
 	// h2c permite HTTP/2 cleartext (sin TLS) en el lado servidor también
 	server := &http.Server{
-		Addr:    localGrpcPort,
+		Addr:    serverAddr,
 		Handler: h2c.NewHandler(mux, &http2.Server{}),
 	}
 
 	go func() {
-		log.Printf("[Connect-Server] El Node Agent ha expuesto su servidor en http://0.0.0.0%s", localGrpcPort)
+		log.Printf("[Connect-Server] El Node Agent ha expuesto su servidor en http://%s", serverAddr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("El servidor ConnectRPC colapsó: %v", err)
 		}
